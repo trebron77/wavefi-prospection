@@ -1,0 +1,35 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# --- Environnements virtuels ---
+.venv/
+venv/
+env/
+
+# --- Secrets (NE JAMAIS COMMITER) ---
+.env
+.env.*
+!.env.example
+
+# --- Outils de test / cache ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Journaux et traces de l'agent ---
+logs/
+*.log
+*.jsonl
+
+# --- Éditeurs / OS ---
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
