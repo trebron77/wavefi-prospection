@@ -4,17 +4,17 @@ Agent de développement autonome qui tourne **entièrement en local** : il reço
 langage naturel, raisonne, puis agit sur un projet (lire/écrire des fichiers, chercher dans le
 code, exécuter des commandes) en s'appuyant sur l'API d'un LLM.
 
-> **Statut : étapes 1 à 7 terminées — boucle agentique opérationnelle, testée et encadrée.**
+> **Statut : étapes 1 à 8 terminées — agent opérationnel, testé et encadré.**
 > `src/config.py` charge et valide la configuration (`.env`), `src/llm_client.py` dialogue avec
 > toute API compatible OpenAI (texte, `tool_calls`, streaming, erreurs traduites),
-> `src/tools/` fournit cinq outils bornés par un bac à sable, et `src/agent.py` exécute la
+> `src/tools/` fournit cinq outils bornés par un bac à sable, `src/agent.py` exécute la
 > boucle « raisonner → agir → observer » plafonnée par `MAX_ITERATIONS`, avec journal JSONL,
 > budget de tokens et confirmation interactive des commandes sensibles (`--yes` pour les
-> approuver en bloc).
-> La suite `pytest` (211 validations, aucun réseau) couvre configuration, bac à sable, registre,
-> outils, lecture git, client LLM, boucle agentique et CLI.
-> Restent l'interface `rich`/REPL et la gestion du contexte
-> (voir la [feuille de route](#feuille-de-route)).
+> approuver en bloc), `src/context.py` borne l'historique et amorce la session par un instantané
+> du projet, et `src/ui.py` propose une **session interactive multi-tours** rendue avec `rich`
+> (panneaux, tableaux, flux) et des commandes `/aide`, `/reset`, `/quit`…
+> La suite `pytest` (265 validations, aucun réseau) couvre configuration, bac à sable, registre,
+> outils, lecture git, client LLM, boucle agentique, gestion du contexte, interface et CLI.
 
 ## Objectifs
 
@@ -32,7 +32,7 @@ code, exécuter des commandes) en s'appuyant sur l'API d'un LLM.
 ```
 local-dev-agent-01/
 ├── README.md          # but du projet, usage, feuille de route
-├── requirements.txt   # openai + python-dotenv + pytest
+├── requirements.txt   # openai + python-dotenv + rich + pytest
 ├── pyproject.toml     # configuration pytest (pythonpath, options)
 ├── .env.example       # modèle de configuration à copier vers .env
 ├── .gitignore         # exclut venv, __pycache__, .env (clés API) et logs/
@@ -43,14 +43,15 @@ local-dev-agent-01/
 │   ├── test_config.py        test_sandbox.py   test_registry.py
 │   ├── test_tools_files.py   test_tools_search.py   test_tools_shell.py
 │   ├── test_tools_git.py     test_llm_client.py     test_agent.py
-│   ├── test_cli.py
-│   └── legacy/        # anciens scripts de vérification (_chk_*.py, _e2e_agent.py)
+│   ├── test_ui.py            test_context.py      test_cli.py
 └── src/
     ├── __init__.py    # marque src/ comme package Python (+ __version__)
     ├── main.py        # point d'entrée : bannière, ou session complète avec -p
     ├── config.py      # Settings : lecture et validation de l'environnement
     ├── llm_client.py  # LLMClient : chat, tool_calls, streaming, erreurs
     ├── agent.py       # Agent : boucle bornée, journal JSONL, CLI
+    ├── context.py     # estimation de tokens, troncature, instantané du projet
+    ├── ui.py          # interface interactive : REPL multi-tours + rendu rich
     └── tools/
         ├── __init__.py  # façade publique du registre
         ├── base.py      # Tool, ToolRegistry, validation des arguments
@@ -83,8 +84,10 @@ python -m pip install -r requirements.txt
 ```
 
 > **Note — `requirements.txt`** : `openai` (client compatible OpenAI, utilisé par
-> `src/llm_client.py`), `python-dotenv` (lecture de `.env` par `src/config.py`) et `pytest`
-> (suite de tests hors ligne). `rich` reste en commentaire (interface à venir).
+> `src/llm_client.py`), `python-dotenv` (lecture de `.env` par `src/config.py`), `rich`
+> (interface interactive de `src/ui.py`) et `pytest` (suite de tests hors ligne).
+> `rich` reste **facultatif à l'exécution** : s'il est absent, l'interface retombe
+> automatiquement sur un affichage texte simple.
 
 ## Configuration
 
@@ -122,8 +125,11 @@ python src/main.py -p "Ajoute une fonction somme(a, b) dans src/main.py puis vé
 # Aucun appel réseau : configuration, outils et prompt système
 python src/agent.py --dry-run
 
-# Sans -p, la tâche est demandée interactivement (ou lue sur stdin)
+# Sans -p dans un terminal : session interactive multi-tours (REPL)
 python src/agent.py
+
+# Sans -p avec une entrée redirigée : la tâche est lue sur stdin
+Get-Content demande.txt | python src/agent.py
 
 # Approuver d'avance les commandes sensibles et forcer un modèle
 python src/agent.py -p "Lance les tests et corrige les échecs" --yes --model gpt-4o
@@ -145,8 +151,8 @@ Aperçu d'une session :
 [agent] final_answer | 2 itération(s) | 1 outil(s) | 1 234 tokens
 ```
 
-Options : `--model`, `--max-iterations`, `--token-budget`, `-y/--yes`, `--log-dir`, `--no-log`,
-`--stream`, `--dry-run`, `-q`, `--version`.
+Options : `--model`, `--max-iterations`, `--token-budget`, `--context-tokens`, `--no-context`,
+`-y/--yes`, `--repl`, `--log-dir`, `--no-log`, `--stream`, `--dry-run`, `-q`, `--version`.
 Codes de sortie : `0` réponse finale, `1` erreur de configuration, `2` borne atteinte
 (`max_iterations` ou `token_budget`), `130` interruption.
 
@@ -155,7 +161,67 @@ Avant chaque `run_command`, l'agent demande une confirmation (`o`/`n`).
 par défaut avec un rappel de `--yes` : aucune commande destructrice ne part en silence.
 
 Chaque session écrit `logs/session-AAAAMMJJ-HHMMSS.jsonl` : un événement JSON par ligne
-(`session_start`, `llm_request`, `llm_response`, `tool_call`, `tool_result`, `session_end`).
+(`session_start`, `llm_request`, `llm_response`, `tool_call`, `tool_result`, `tool_approved`,
+`tool_refused`, `git_diff`, `context_injected`, `context_trimmed`, `error`, `session_end`).
+
+### Session interactive (REPL)
+
+Dans un terminal, l'absence de `-p` ouvre une session multi-tours : l'historique est
+conservé d'une demande à l'autre, donc le modèle se souvient de ce qu'il a déjà lu, écrit
+ou exécuté.
+
+```powershell
+# Session interactive (équivalent à --repl)
+python src/agent.py
+
+# Forcer la session même avec une entrée redirigée (script, CI)
+python src/agent.py --repl < demandes.txt
+```
+
+| Commande | Effet |
+|---|---|
+| `/aide` | liste des commandes |
+| `/outils` | outils disponibles et leur rôle |
+| `/reset` | oublie l'historique (repart d'une conversation vierge) |
+| `/stats` | tokens consommés, messages et estimation du contexte |
+| `/journal` | chemin du journal JSONL de la session |
+| `/oui` | bascule l'approbation automatique des outils sensibles |
+| `/quit` | quitte (`/exit`, `quit`, `exit`, `bye`, ou Ctrl+D) |
+
+`Ctrl+C` pendant une tâche annule **la tâche en cours** sans quitter la session ; au prompt,
+il efface la ligne en cours. `--yes` démarre en approbation automatique (la bascule `/oui`
+fonctionne dans les deux sens). `--repl` et `-p` sont incompatibles.
+
+Avec `rich`, la bannière, la progression, la réponse (Markdown) et les statistiques sont
+rendues en panneaux et tableaux. Sans `rich` — ou si la console refuse l'Unicode — l'interface
+repasse d'elle-même en texte simple : une session ne s'interrompt jamais pour un caractère.
+
+### Gestion du contexte
+
+Deux mécanismes bornent ce qui part au modèle à chaque tour (`src/context.py`) :
+
+- **Instantané du projet** — au premier tour, un second message système décrit l'arborescence
+  (60 entrées, profondeur 2), un extrait du `README` (1 200 caractères) et le `git status`
+  (800 caractères). Les dossiers techniques (`.git`, `.venv`, `node_modules`, `__pycache__`) et
+  les fichiers cachés — dont `.env`, qui contient la clé API — sont exclus. Le texte est calculé
+  une seule fois puis mis en cache ; `--no-context` le désactive, et un échec de collecte
+  n'interrompt jamais la session.
+- **Budget d'historique** — `--context-tokens` (16 000 par défaut, `0` = illimité) estime la
+  conversation à ≈ 4 caractères par token. Au-delà, les échanges les plus anciens sont retirés
+  **par blocs complets** : un message `assistant` porteur de `tool_calls` n'est jamais séparé de
+  ses messages `tool`. Le prompt système et le dernier échange sont toujours conservés, et une
+  note `[contexte] …` indique au modèle ce qui a été omis.
+
+```powershell
+python src/agent.py -p "..." --context-tokens 8000   # historique plus court
+python src/agent.py -p "..." --context-tokens 0      # aucune troncature
+python src/agent.py -p "..." --no-context            # sans instantané du projet
+```
+
+`/stats` dans le REPL affiche les tokens consommés, le nombre de messages en mémoire et
+l'estimation courante du contexte ; `/reset` vide l'historique (l'instantané reste en cache et
+est réinjecté à la demande suivante). Les événements `context_injected` et `context_trimmed`
+apparaissent aussi dans le journal JSONL.
 
 ### Bannière seule
 
@@ -203,9 +269,9 @@ Les tests s'appuient sur `tests/conftest.py` (projet temporaire, `Sandbox`, regi
 `pyproject.toml` déclare `pythonpath = [".", "tests"]`, ce qui permet d'écrire `from src...`
 comme dans le reste du projet.
 
-Les anciens scripts de vérification (`tests/legacy/_chk_tools.py`, `_chk_agent.py`,
-`_e2e_agent.py`) restent exécutables depuis la racine du projet ; ils ont servi de filet lors
-de la migration vers `pytest`.
+Les anciens scripts de vérification manuels (`tests/legacy/_chk_tools.py`, `_chk_agent.py`,
+`_e2e_agent.py`) ont été portés en `pytest` puis supprimés : la suite ci-dessus est désormais
+l'unique filet de sécurité.
 
 ### Utiliser le client depuis le code
 
@@ -368,15 +434,21 @@ tests) et `confirm` (outils sensibles, voir §7).
 - **Journal** — ✅ `logs/session-*.jsonl` : un événement horodaté par ligne, contenus tronqués à
   2 000 caractères (`tool_approved`, `tool_refused`, `git_diff` inclus).
 
-### 8. Confort et qualité — 🔄 en cours
+### 8. Confort, contexte et qualité — ✅ fait
 
-- CLI `argparse` — ✅ `-p/--prompt`, `--model`, `--max-iterations`, `--token-budget`, `-y/--yes`,
-  `--log-dir`, `--no-log`, `--stream`, `--dry-run`, `-q`, `--version`.
-- Tests `pytest` — ✅ `tests/` : 211 validations hors ligne (1 test ignoré sous Windows faute de
+- CLI `argparse` — ✅ `-p/--prompt`, `--model`, `--max-iterations`, `--token-budget`,
+  `--context-tokens`, `--no-context`, `-y/--yes`, `--repl`, `--log-dir`, `--no-log`, `--stream`,
+  `--dry-run`, `-q`, `--version`.
+- Tests `pytest` — ✅ `tests/` : 265 validations hors ligne (1 test ignoré sous Windows faute de
   privilèges pour les liens symboliques). Couverture : configuration, bac à sable, registre,
   cinq outils, lecture git, client LLM (texte, outils, flux, erreurs), boucle agentique (bornes,
-  cache anti-boucle, journal, confirmation, diff avant écriture) et CLI (codes de sortie,
-  `--dry-run`, `--no-log`, stdin, `--model`, `--yes`, `--version`).
-- Gestion du contexte — ⏳ troncature/résumé de l'historique, injection de l'arborescence et du
-  `README` au démarrage, prise en compte du `git status` / `git diff`
-  (`read_git_status` est déjà disponible).
+  cache anti-boucle, journal, confirmation, diff avant écriture), gestion du contexte
+  (estimation, troncature par échanges complets, instantané injecté une seule fois puis mis en
+  cache, échec toléré), interface (`rich` et repli texte, commandes du REPL) et CLI (codes de
+  sortie, `--dry-run`, `--no-log`, stdin, `--model`, `--yes`, `--context-tokens`, `--no-context`,
+  `--version`).
+- Gestion du contexte — ✅ `src/context.py` : estimation ≈ 4 caractères/token,
+  `trim_messages` qui préserve le prompt système et les derniers échanges entiers (paires
+  `assistant(tool_calls)`/`tool` jamais coupées) avec note `[contexte]`, et
+  `build_project_context` (arborescence bornée, extrait du `README`, `git status`) injecté au
+  premier tour. Voir [Gestion du contexte](#gestion-du-contexte).
