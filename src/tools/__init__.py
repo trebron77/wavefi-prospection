@@ -16,6 +16,7 @@ tous les chemins sont vérifiés avant d'atteindre le disque.
 
 from .base import Tool, ToolError, ToolRegistry, ToolResult, validate_arguments
 from .files import list_dir, read_file, write_file
+from .git import read_git_diff, read_git_status
 from .registry import TOOL_NAMES, build_default_registry
 from .sandbox import EXCLUDED_DIRS, Sandbox
 from .search import search_code
@@ -36,5 +37,7 @@ __all__ = [
     "list_dir",
     "search_code",
     "run_command",
+    "read_git_diff",
+    "read_git_status",
     "ALLOWED_COMMANDS",
 ]

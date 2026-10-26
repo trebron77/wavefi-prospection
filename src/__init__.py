@@ -8,5 +8,5 @@ Modules :
     - ``tools``      : outils locaux (fichiers, recherche, commandes) et bac à sable
 """
 
-__version__ = "0.3.0"
+__version__ = "0.7.0"
 

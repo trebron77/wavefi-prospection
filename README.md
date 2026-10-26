@@ -4,14 +4,16 @@ Agent de développement autonome qui tourne **entièrement en local** : il reço
 langage naturel, raisonne, puis agit sur un projet (lire/écrire des fichiers, chercher dans le
 code, exécuter des commandes) en s'appuyant sur l'API d'un LLM.
 
-> **Statut : étapes 1 à 6 terminées — boucle agentique opérationnelle et testée.**
+> **Statut : étapes 1 à 7 terminées — boucle agentique opérationnelle, testée et encadrée.**
 > `src/config.py` charge et valide la configuration (`.env`), `src/llm_client.py` dialogue avec
 > toute API compatible OpenAI (texte, `tool_calls`, streaming, erreurs traduites),
 > `src/tools/` fournit cinq outils bornés par un bac à sable, et `src/agent.py` exécute la
-> boucle « raisonner → agir → observer » plafonnée par `MAX_ITERATIONS`, avec journal JSONL.
-> La suite `pytest` (188 validations, aucun réseau) couvre configuration, bac à sable, registre,
-> outils, client LLM, boucle agentique et CLI.
-> Restent les garde-fous interactifs, l'interface `rich`/REPL et la gestion du contexte
+> boucle « raisonner → agir → observer » plafonnée par `MAX_ITERATIONS`, avec journal JSONL,
+> budget de tokens et confirmation interactive des commandes sensibles (`--yes` pour les
+> approuver en bloc).
+> La suite `pytest` (211 validations, aucun réseau) couvre configuration, bac à sable, registre,
+> outils, lecture git, client LLM, boucle agentique et CLI.
+> Restent l'interface `rich`/REPL et la gestion du contexte
 > (voir la [feuille de route](#feuille-de-route)).
 
 ## Objectifs
@@ -40,10 +42,11 @@ local-dev-agent-01/
 │   ├── helpers.py     # FakeClient (LLM scripté) et arborescence de test
 │   ├── test_config.py        test_sandbox.py   test_registry.py
 │   ├── test_tools_files.py   test_tools_search.py   test_tools_shell.py
-│   ├── test_llm_client.py    test_agent.py     test_cli.py
+│   ├── test_tools_git.py     test_llm_client.py     test_agent.py
+│   ├── test_cli.py
 │   └── legacy/        # anciens scripts de vérification (_chk_*.py, _e2e_agent.py)
 └── src/
-    ├── __init__.py    # marque src/ comme package Python
+    ├── __init__.py    # marque src/ comme package Python (+ __version__)
     ├── main.py        # point d'entrée : bannière, ou session complète avec -p
     ├── config.py      # Settings : lecture et validation de l'environnement
     ├── llm_client.py  # LLMClient : chat, tool_calls, streaming, erreurs
@@ -55,6 +58,7 @@ local-dev-agent-01/
         ├── files.py     # read_file, write_file, list_dir
         ├── search.py    # search_code (regex, secrets/binaires ignorés)
         ├── shell.py     # run_command (liste blanche, shell=False, timeout)
+        ├── git.py       # read_git_diff, read_git_status (lecture seule)
         └── registry.py  # build_default_registry() : les cinq outils
 ```
 
@@ -120,6 +124,12 @@ python src/agent.py --dry-run
 
 # Sans -p, la tâche est demandée interactivement (ou lue sur stdin)
 python src/agent.py
+
+# Approuver d'avance les commandes sensibles et forcer un modèle
+python src/agent.py -p "Lance les tests et corrige les échecs" --yes --model gpt-4o
+
+# Version installée
+python src/agent.py --version
 ```
 
 Aperçu d'une session :
@@ -135,9 +145,14 @@ Aperçu d'une session :
 [agent] final_answer | 2 itération(s) | 1 outil(s) | 1 234 tokens
 ```
 
-Options : `--max-iterations`, `--token-budget`, `--log-dir`, `--no-log`, `--stream`, `-q`.
+Options : `--model`, `--max-iterations`, `--token-budget`, `-y/--yes`, `--log-dir`, `--no-log`,
+`--stream`, `--dry-run`, `-q`, `--version`.
 Codes de sortie : `0` réponse finale, `1` erreur de configuration, `2` borne atteinte
 (`max_iterations` ou `token_budget`), `130` interruption.
+
+Avant chaque `run_command`, l'agent demande une confirmation (`o`/`n`).
+`-y/--yes` approuve d'avance ; sans terminal interactif (pipe, CI), l'appel est **refusé**
+par défaut avec un rappel de `--yes` : aucune commande destructrice ne part en silence.
 
 Chaque session écrit `logs/session-AAAAMMJJ-HHMMSS.jsonl` : un événement JSON par ligne
 (`session_start`, `llm_request`, `llm_response`, `tool_call`, `tool_result`, `session_end`).
@@ -332,10 +347,10 @@ répéter jusqu'à réponse finale ou MAX_ITERATIONS :
 
 Points implémentés : arrêt propre sur `MAX_ITERATIONS` et sur `--token-budget`, erreurs d'outil et
 JSON invalide **renvoyés au modèle** (aucun crash), protection anti-boucle (un appel strictement
-identique n'est pas réexécuté), journal JSONL de chaque étape, callback `on_event` pour une future
-interface.
+identique n'est pas réexécuté), journal JSONL de chaque étape, callbacks `on_event` (interface,
+tests) et `confirm` (outils sensibles, voir §7).
 
-### 7. Sécurité et garde-fous — ✅ en grande partie fait
+### 7. Sécurité et garde-fous — ✅ fait
 
 - **Sandbox** — ✅ `src/tools/sandbox.py` : chaque chemin passe par `Path.resolve()` puis doit être
   le dossier du projet ou l'un de ses descendants. `..`, chemins absolus externes et liens
@@ -344,19 +359,24 @@ interface.
   (1–300 s), refus des motifs destructeurs (`git push`, `git reset --hard`, `pip install`, `npx`…)
   et des tubes/redirections/`&&`.
 - **Écritures** — ✅ refus de `.git`, `.venv`, `node_modules` et de tout `.env*` (secrets) ;
-  réécriture UTF-8 avec fins de ligne LF. ⏳ Reste : `git diff` automatique avant modification.
+  réécriture UTF-8 avec fins de ligne LF ; avant chaque `write_file`, le `git diff` du fichier est
+  consigné (événement `git_diff`) pour garder une trace de l'état antérieur.
 - **Budget** — ✅ `MAX_ITERATIONS` (défaut 15) et `--token-budget` optionnel.
+- **Confirmation** — ✅ callback `confirm(name, arguments)` consulté avant tout outil
+  `dangerous` (`run_command`) : `o`/`n` en terminal, refus hors terminal, `-y/--yes` pour
+  approuver d'avance. Un refus devient un message `ACTION REFUSÉE` renvoyé au modèle.
 - **Journal** — ✅ `logs/session-*.jsonl` : un événement horodaté par ligne, contenus tronqués à
-  2 000 caractères. ⏳ Reste : confirmation interactive (`--yes`) pour les actions sensibles.
+  2 000 caractères (`tool_approved`, `tool_refused`, `git_diff` inclus).
 
-### 8. Confort et qualité
+### 8. Confort et qualité — 🔄 en cours
 
-- CLI `argparse` — ✅ `-p/--prompt`, `--max-iterations`, `--token-budget`, `--log-dir`, `--no-log`,
-  `--stream`, `--dry-run`, `-q`. ⏳ Reste : `--model` en surcharge et `--yes` pour les
-  confirmations.
-- Tests `pytest` — ✅ `tests/` : 188 validations hors ligne (1 test ignoré sous Windows faute de
+- CLI `argparse` — ✅ `-p/--prompt`, `--model`, `--max-iterations`, `--token-budget`, `-y/--yes`,
+  `--log-dir`, `--no-log`, `--stream`, `--dry-run`, `-q`, `--version`.
+- Tests `pytest` — ✅ `tests/` : 211 validations hors ligne (1 test ignoré sous Windows faute de
   privilèges pour les liens symboliques). Couverture : configuration, bac à sable, registre,
-  cinq outils, client LLM (texte, outils, flux, erreurs), boucle agentique (bornes, cache
-  anti-boucle, journal) et CLI (codes de sortie, `--dry-run`, `--no-log`, stdin).
+  cinq outils, lecture git, client LLM (texte, outils, flux, erreurs), boucle agentique (bornes,
+  cache anti-boucle, journal, confirmation, diff avant écriture) et CLI (codes de sortie,
+  `--dry-run`, `--no-log`, stdin, `--model`, `--yes`, `--version`).
 - Gestion du contexte — ⏳ troncature/résumé de l'historique, injection de l'arborescence et du
-  `README` au démarrage, prise en compte du `git status` / `git diff`.
+  `README` au démarrage, prise en compte du `git status` / `git diff`
+  (`read_git_status` est déjà disponible).

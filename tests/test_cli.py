@@ -197,12 +197,14 @@ def test_analyseur_valeurs_par_defaut():
 
     assert args.prompt is None
     assert args.max_iterations is None
+    assert args.model is None
     assert args.token_budget is None
     assert args.log_dir == "logs"
     assert args.no_log is False
     assert args.stream is False
     assert args.dry_run is False
     assert args.quiet is False
+    assert args.yes is False
 
 
 def test_analyseur_options():
@@ -212,6 +214,8 @@ def test_analyseur_options():
             "tache",
             "--max-iterations",
             "7",
+            "--model",
+            "modele-cli",
             "--token-budget",
             "900",
             "--log-dir",
@@ -219,18 +223,21 @@ def test_analyseur_options():
             "--no-log",
             "--stream",
             "--dry-run",
+            "-y",
             "-q",
         ]
     )
 
     assert args.prompt == "tache"
     assert args.max_iterations == 7
+    assert args.model == "modele-cli"
     assert args.token_budget == 900
     assert args.log_dir == "tmp-logs"
     assert args.no_log is True
     assert args.stream is True
     assert args.dry_run is True
     assert args.quiet is True
+    assert args.yes is True
 
 
 def test_option_inconnue_rejetee():
@@ -238,4 +245,113 @@ def test_option_inconnue_rejetee():
         _build_parser().parse_args(["--inexistant"])
 
     assert info.value.code == 2
+
+
+# --- Garde-fous CLI : modele force, confirmation et version
+
+
+class FauxTTY(io.StringIO):
+    """Flux minimal imitant un terminal interactif."""
+
+    def isatty(self):
+        return True
+
+
+def test_option_model_surcharge_la_configuration(cli, settings):
+    code = main(["-p", "x", "--no-log", "--model", "  modele-force  "])
+
+    assert code == 0
+    assert cli.instances[0].kwargs["settings"].model == "modele-force"
+    # La configuration d'origine reste intacte (dataclass gelee).
+    assert settings.model == "fake-model"
+
+
+def test_option_model_vide_rejetee(cli, capsys):
+    code = main(["-p", "x", "--no-log", "--model", "   "])
+
+    assert code == 1
+    assert "--model" in capsys.readouterr().out
+    assert cli.instances == []
+
+
+def test_yes_desactive_la_confirmation(cli):
+    main(["-p", "x", "--no-log", "--yes"])
+
+    assert cli.instances[0].kwargs["confirm"] is None
+
+
+def test_confirmation_active_par_defaut(cli):
+    main(["-p", "x", "--no-log"])
+
+    confirm = cli.instances[0].kwargs["confirm"]
+    assert callable(confirm)
+
+
+def test_confirmation_interactive_acceptee(cli, monkeypatch):
+    invites = []
+    monkeypatch.setattr("sys.stdin", FauxTTY(""))
+
+    def repondre(invite):
+        invites.append(invite)
+        return "o"
+
+    monkeypatch.setattr("builtins.input", repondre)
+    main(["-p", "x", "--no-log"])
+
+    accepte = cli.instances[0].kwargs["confirm"]("run_command", {"command": "pytest"})
+
+    assert accepte is True
+    assert "run_command" in invites[0]
+    assert "pytest" in invites[0]
+
+
+def test_confirmation_interactive_refusee(cli, monkeypatch):
+    invites = []
+    monkeypatch.setattr("sys.stdin", FauxTTY(""))
+
+    def repondre(invite):
+        invites.append(invite)
+        return ""
+
+    monkeypatch.setattr("builtins.input", repondre)
+    main(["-p", "x", "--no-log"])
+
+    accepte = cli.instances[0].kwargs["confirm"]("run_command", {"command": "pytest"})
+
+    assert accepte is False
+    assert "run_command" in invites[0]
+
+
+def test_confirmation_hors_terminal_refusee(cli, monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    main(["-p", "x", "--no-log"])
+
+    accepte = cli.instances[0].kwargs["confirm"]("run_command", {"command": "pytest"})
+
+    sortie = capsys.readouterr().out
+    assert accepte is False
+    assert "[REFUS]" in sortie
+    assert "--yes" in sortie
+
+
+def test_confirmation_entree_fermee(cli, monkeypatch):
+    monkeypatch.setattr("sys.stdin", FauxTTY(""))
+
+    def ferme(invite):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", ferme)
+    main(["-p", "x", "--no-log"])
+
+    assert cli.instances[0].kwargs["confirm"]("run_command", {}) is False
+
+
+def test_version_affichee(capsys):
+    from src import __version__
+
+    with pytest.raises(SystemExit) as info:
+        main(["--version"])
+
+    assert info.value.code == 0
+    assert __version__ in capsys.readouterr().out
 

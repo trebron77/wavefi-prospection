@@ -8,25 +8,28 @@ jusqu'à ``MAX_ITERATIONS``.
 Utilisation :
     python src/agent.py -p "Résume la structure du projet"
     python src/agent.py -p "Ajoute une fonction somme dans src/main.py" --max-iterations 8
+    python src/agent.py -p "Lance les tests" --yes     (sans confirmation des commandes)
     python src/agent.py --dry-run        (aucun appel réseau)
 """
 
 import argparse
 import json
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 try:  # exécution en package : python -m src.agent
+    from . import __version__
     from .config import PROJECT_ROOT, ConfigError, Settings, load_settings
     from .llm_client import LLMClient, LLMError, LLMResponse, ToolCall
-    from .tools import ToolRegistry, build_default_registry
+    from .tools import ToolRegistry, build_default_registry, read_git_diff
 except ImportError:  # exécution directe : python src/agent.py
+    from __init__ import __version__
     from config import PROJECT_ROOT, ConfigError, Settings, load_settings
     from llm_client import LLMClient, LLMError, LLMResponse, ToolCall
-    from tools import ToolRegistry, build_default_registry
+    from tools import ToolRegistry, build_default_registry, read_git_diff
 
 __all__ = [
     "Agent",
@@ -175,6 +178,7 @@ class Agent:
         system_prompt: Optional[str] = None,
         stream: bool = False,
         on_token: Optional[Callable[[str], None]] = None,
+        confirm: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
     ) -> None:
         """Prépare l'agent.
 
@@ -192,9 +196,13 @@ class Agent:
             system_prompt: prompt système alternatif.
             stream: demander la réponse du modèle en flux.
             on_token: callback appelé à chaque fragment de texte (mode flux).
+            confirm: callback ``(outil, arguments) -> bool`` consulté avant tout
+                outil ``dangerous`` (``run_command``). ``None`` = aucune
+                confirmation (comportement de ``--yes``).
 
         Raises:
             ValueError: ``max_iterations`` < 1 ou ``token_budget`` <= 0.
+            TypeError: ``confirm`` fourni mais non appelable.
         """
         self.settings = settings or load_settings()
         self.client = client or LLMClient(self.settings)
@@ -215,6 +223,9 @@ class Agent:
         self.system_prompt = system_prompt or SYSTEM_PROMPT
         self.stream = stream
         self.on_token = on_token
+        if confirm is not None and not callable(confirm):
+            raise TypeError("confirm doit être appelable ou None.")
+        self.confirm = confirm
         self._history: List[Dict[str, Any]] = []
 
     @property
@@ -472,6 +483,31 @@ class Agent:
             )
             return content
 
+        if self._refuse(call, iteration):
+            content = (
+                f"ACTION REFUSÉE ({call.name}) : l'utilisateur n'a pas autorisé cet "
+                "appel. Ne le réémettez pas à l'identique : proposez une approche "
+                "sans effet de bord, ou demandez à l'utilisateur de relancer avec "
+                "--yes."
+            )
+            if key:
+                cache[key] = content
+            self._emit(
+                "tool_result",
+                f"  ← {call.name} : refusé par l'utilisateur",
+                iteration=iteration,
+                name=call.name,
+                ok=False,
+                error="confirmation refusée",
+                content=content[:LOG_PREVIEW],
+                refused=True,
+            )
+            return content
+
+        if call.name == "write_file":
+            # Trace de l'état git avant écrasement : audit et retour arrière aisés.
+            self._log_git_diff(call.arguments, iteration)
+
         result = self.registry.execute(call.name, call.arguments)
         if key:
             cache[key] = result.content
@@ -487,6 +523,54 @@ class Agent:
             truncated=len(result.content) > LOG_PREVIEW,
         )
         return result.content
+
+    def _refuse(self, call: ToolCall, iteration: int) -> bool:
+        """Demande l'autorisation avant un outil sensible (``dangerous``).
+
+        Args:
+            call: appel demandé par le modèle.
+            iteration: numéro d'itération (journal).
+
+        Returns:
+            ``True`` si l'appel doit être refusé. Sans callback ``confirm``, ou
+            pour un outil inconnu ou inoffensif, renvoie ``False``.
+        """
+        if self.confirm is None or call.name not in self.registry:
+            return False
+        if not self.registry.get(call.name).dangerous:
+            return False
+        try:
+            accepte = bool(self.confirm(call.name, dict(call.arguments or {})))
+        except Exception:  # une interface défaillante ne casse pas l'agent
+            accepte = False
+        self._emit(
+            "tool_approved" if accepte else "tool_refused",
+            "" if accepte else f"  ← {call.name} : action non autorisée",
+            iteration=iteration,
+            name=call.name,
+            arguments=call.arguments,
+            approved=accepte,
+        )
+        return not accepte
+
+    def _log_git_diff(self, arguments: Mapping[str, Any], iteration: int) -> None:
+        """Consigne l'état git du fichier avant un écrasement par ``write_file``.
+
+        Le diff est un simple outil d'audit : son absence (git indisponible,
+        fichier non suivi, dépôt inexistant) ne bloque jamais l'écriture.
+        """
+        path = arguments.get("path")
+        diff = read_git_diff(self.root, path)
+        if not diff:
+            return
+        self._emit(
+            "git_diff",
+            f"  [git] diff de {path} avant écriture ({len(diff)} caractères)",
+            iteration=iteration,
+            path=path,
+            diff=diff[:LOG_PREVIEW],
+            truncated=len(diff) > LOG_PREVIEW,
+        )
 
     def _emit(self, event: str, message: str = "", **fields: Any) -> None:
         """Journalise un événement et l'affiche si ``verbose`` est actif."""
@@ -508,6 +592,12 @@ class Agent:
             f"Bac à sable    : {self.root}",
             f"Itérations max : {self.max_iterations}",
             f"Budget tokens  : {self.token_budget or 'illimité'}",
+            "Confirmation   : "
+            + (
+                "non demandée (--yes)"
+                if self.confirm is None
+                else "demandée avant chaque outil sensible"
+            ),
             "",
             "Outils disponibles :",
         ]
@@ -550,10 +640,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Borne d'itérations (MAX_ITERATIONS du .env par défaut).",
     )
     parser.add_argument(
+        "--model",
+        default=None,
+        help="Modèle à utiliser (LLM_MODEL du .env par défaut).",
+    )
+    parser.add_argument(
         "--token-budget",
         type=int,
         default=None,
         help="Budget de tokens pour la tâche (illimité par défaut).",
+    )
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Approuver automatiquement les outils sensibles (run_command).",
     )
     parser.add_argument(
         "--log-dir",
@@ -574,7 +675,47 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-q", "--quiet", action="store_true", help="N'afficher que la réponse finale."
     )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Afficher la version et quitter.",
+    )
     return parser
+
+
+def _make_confirmation() -> Callable[[str, Dict[str, Any]], bool]:
+    """Construit le callback de confirmation des outils sensibles.
+
+    En session interactive, l'utilisateur répond ``o``/``n``. Hors terminal
+    (pipe, CI, redirection), la demande est refusée par défaut avec un rappel de
+    l'option ``--yes`` : un agent ne doit jamais exécuter une commande
+    destructrice parce que personne ne pouvait répondre.
+
+    Returns:
+        Une fonction ``(outil, arguments) -> bool`` à passer à ``Agent``.
+    """
+
+    def confirmer(name: str, arguments: Mapping[str, Any]) -> bool:
+        resume = _format_arguments(arguments)
+        try:
+            interactif = bool(sys.stdin is not None and sys.stdin.isatty())
+        except (AttributeError, OSError, ValueError):
+            interactif = False
+        if not interactif:
+            print(
+                f"[REFUS] « {name}({resume}) » nécessite une confirmation : "
+                "aucun terminal interactif. Relancez avec --yes pour l'autoriser."
+            )
+            return False
+        try:
+            reponse = input(f"Exécuter « {name}({resume}) » ? [o/N] ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return False
+        return reponse.strip().lower() in ("o", "oui", "y", "yes")
+
+    return confirmer
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -594,6 +735,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"[ERREUR] Configuration invalide : {exc}")
         return 1
 
+    if args.model:
+        model = args.model.strip()
+        if not model:
+            print("[ERREUR] --model ne peut pas être vide.")
+            return 1
+        settings = replace(settings, model=model)
+
     try:
         agent = Agent(
             settings=settings,
@@ -601,6 +749,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             token_budget=args.token_budget,
             verbose=not args.quiet,
             stream=args.stream,
+            confirm=None if args.yes else _make_confirmation(),
         )
     except (ValueError, RuntimeError) as exc:
         print(f"[ERREUR] Initialisation impossible : {exc}")
