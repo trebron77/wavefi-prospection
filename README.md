@@ -4,18 +4,20 @@ Agent de développement autonome qui tourne **entièrement en local** : il reço
 langage naturel, raisonne, puis agit sur un projet (lire/écrire des fichiers, chercher dans le
 code, exécuter des commandes) en s'appuyant sur l'API d'un LLM.
 
-> **Statut : étapes 1 et 2 terminées — squelette + client LLM.**
+> **Statut : étapes 1 à 6 terminées — boucle agentique opérationnelle.**
 > `src/config.py` charge et valide la configuration (`.env`), `src/llm_client.py` dialogue avec
-> toute API compatible OpenAI (texte, `tool_calls`, streaming, erreurs traduites). Il reste à
-> écrire la boucle agentique et les outils
-> (voir [Prochaines étapes](#prochaines-étapes--connecter-une-api-de-llm)).
+> toute API compatible OpenAI (texte, `tool_calls`, streaming, erreurs traduites),
+> `src/tools/` fournit cinq outils bornés par un bac à sable, et `src/agent.py` exécute la
+> boucle « raisonner → agir → observer » plafonnée par `MAX_ITERATIONS`, avec journal JSONL.
+> Restent les garde-fous interactifs et les tests `pytest`
+> (voir la [feuille de route](#feuille-de-route)).
 
 ## Objectifs
 
 - **Boucle agentique** « raisonner → agir → observer » : le LLM choisit des outils, l'agent les
   exécute, réinjecte les résultats, et recommence jusqu'à la réponse finale.
 - **Outils locaux** : lecture/écriture de fichiers, listing d'arborescence, recherche plein texte,
-  exécution de commandes shell, lecture d'un diff git.
+  exécution de commandes de développement validées, lecture d'un diff git (`git diff`).
 - **LLM interchangeable** via une API *compatible OpenAI* (OpenAI, Groq, Mistral, Together,
   mais aussi **Ollama** ou **LM Studio** pour un fonctionnement 100 % hors ligne).
 - **Garde-fous** : périmètre limité au dossier du projet (*sandbox*), confirmation des actions
@@ -28,12 +30,22 @@ local-dev-agent-01/
 ├── README.md          # but du projet, usage, feuille de route
 ├── requirements.txt   # openai + python-dotenv
 ├── .env.example       # modèle de configuration à copier vers .env
-├── .gitignore         # exclut venv, __pycache__ et .env (clés API)
+├── .gitignore         # exclut venv, __pycache__, .env (clés API) et logs/
+├── logs/              # journaux JSONL générés (créé au premier lancement)
 └── src/
     ├── __init__.py    # marque src/ comme package Python
-    ├── main.py        # point d'entrée : affiche le message d'initialisation
+    ├── main.py        # point d'entrée : bannière, ou session complète avec -p
     ├── config.py      # Settings : lecture et validation de l'environnement
-    └── llm_client.py  # LLMClient : chat, tool_calls, streaming, erreurs
+    ├── llm_client.py  # LLMClient : chat, tool_calls, streaming, erreurs
+    ├── agent.py       # Agent : boucle bornée, journal JSONL, CLI
+    └── tools/
+        ├── __init__.py  # façade publique du registre
+        ├── base.py      # Tool, ToolRegistry, validation des arguments
+        ├── sandbox.py   # Sandbox : Path.resolve() + refus hors projet
+        ├── files.py     # read_file, write_file, list_dir
+        ├── search.py    # search_code (regex, secrets/binaires ignorés)
+        ├── shell.py     # run_command (liste blanche, shell=False, timeout)
+        └── registry.py  # build_default_registry() : les cinq outils
 ```
 
 ## Prérequis
@@ -58,7 +70,7 @@ python -m pip install -r requirements.txt
 
 > **Note — `requirements.txt`** : deux dépendances seulement — `openai` (client compatible
 > OpenAI, utilisé par `src/llm_client.py`) et `python-dotenv` (lecture de `.env` par
-> `src/config.py`). `rich` et `pytest` restent en commentaires pour l'étape 3.
+> `src/config.py`). `rich` et `pytest` restent en commentaires (interface et tests à venir).
 
 ## Configuration
 
@@ -84,20 +96,57 @@ la variable fautive. `Settings` est immuable et sa clé API est **masquée** dan
 
 ## Utilisation
 
+### Lancer une tâche
+
+```powershell
+# Session complète : le LLM choisit les outils, l'agent les exécute
+python src/agent.py -p "Résume la structure du projet et cite les fichiers de src/"
+
+# Même chose depuis le point d'entrée principal
+python src/main.py -p "Ajoute une fonction somme(a, b) dans src/main.py puis vérifie-la"
+
+# Aucun appel réseau : configuration, outils et prompt système
+python src/agent.py --dry-run
+
+# Sans -p, la tâche est demandée interactivement (ou lue sur stdin)
+python src/agent.py
+```
+
+Aperçu d'une session :
+
+```text
+[agent] modèle=gpt-4o-mini | outils=5 | itérations max=15
+[1/15] appel du modèle (2 messages)…
+  ← réponse reçue : 0 caractère(s), outils demandés : read_file
+  → read_file({"max_lines": 60, "path": "src/main.py"})
+  ← read_file : ok (412 caractères)
+[2/15] appel du modèle (5 messages)…
+  ← réponse reçue : 187 caractère(s), outils demandés : aucun
+[agent] final_answer | 2 itération(s) | 1 outil(s) | 1 234 tokens
+```
+
+Options : `--max-iterations`, `--token-budget`, `--log-dir`, `--no-log`, `--stream`, `-q`.
+Codes de sortie : `0` réponse finale, `1` erreur de configuration, `2` borne atteinte
+(`max_iterations` ou `token_budget`), `130` interruption.
+
+Chaque session écrit `logs/session-AAAAMMJJ-HHMMSS.jsonl` : un événement JSON par ligne
+(`session_start`, `llm_request`, `llm_response`, `tool_call`, `tool_result`, `session_end`).
+
+### Bannière seule
+
 ```powershell
 python src/main.py
 ```
 
 Sortie attendue :
 
-```
+```text
 Agent initialisé et prêt à travailler
+Utilisez « python src/main.py -p "votre tâche" » pour lancer une session.
 ```
 
-Le script expose deux fonctions dans `src/main.py` :
-
-- `afficher_banniere(message=...)` — affiche le message d'initialisation et le renvoie ;
-- `main()` — point d'entrée, renvoie un code de sortie (`0` = succès).
+`src/main.py` expose `afficher_banniere(message=...)` et `main(argv=None)` ; sans argument elle
+affiche la bannière, avec une tâche elle délègue à `src/agent.py`.
 
 ### Vérifier la connexion au LLM
 
@@ -151,7 +200,7 @@ client.chat([{"role": "user", "content": "Compte de 1 à 5"}], stream=True, on_t
 > `from llm_client import ...` : les deux formes sont supportées (`src/llm_client.py` gère
 > l'import relatif et l'import direct).
 
-## Prochaines étapes — connecter une API de LLM
+## Feuille de route
 
 ### 1. Choisir le fournisseur et le modèle
 
@@ -195,56 +244,89 @@ python -m pip install -r requirements.txt
   et réseau traduites en messages actionnables.
 - `python src/llm_client.py` valide la configuration de bout en bout.
 
-### 5. Modéliser les outils (`src/tools/`)
+### 5. Modéliser les outils — ✅ fait (`src/tools/`)
 
-Un registre où chaque outil déclare son nom, sa description, son schéma JSON (format
-`function calling`) et son *handler* Python :
+`Tool` associe un nom, une description, un schéma JSON (`function calling`) et un *handler*.
+`ToolRegistry` refuse un nom inconnu et valide les arguments contre le schéma (types, champs
+obligatoires, arguments inconnus) avant d'appeler le handler :
 
 ```python
-TOOLS = {
-    "read_file":   Tool(name="read_file",   schema={...}, handler=read_file),
-    "write_file":  Tool(name="write_file",  schema={...}, handler=write_file),
-    "list_dir":    Tool(name="list_dir",    schema={...}, handler=list_dir),
-    "search_code": Tool(name="search_code", schema={...}, handler=search_code),
-    "run_command": Tool(name="run_command", schema={...}, handler=run_command),
-}
+from src.tools import build_default_registry
+
+registre = build_default_registry()          # racine = dossier du projet
+for schema in registre.schemas:
+    print(schema["function"]["name"])        # list_dir, read_file, run_command…
+
+resultat = registre.execute("read_file", {"path": "README.md", "max_lines": 20})
+print(resultat.ok, resultat.content)         # une erreur d'outil ne lève jamais
+
+# chemin hors projet -> resultat.ok = False et message explicite
+registre.execute("read_file", {"path": "../secret.txt"})
 ```
 
-Le schéma JSON est envoyé au LLM ; le *handler* n'est exécuté **que** si le nom demandé existe
-dans le registre (aucune exécution dynamique arbitraire).
+| Outil | Rôle | Garde-fous |
+| --- | --- | --- |
+| `read_file` | lit un fichier texte, par plages de lignes | refuse `.env`, les binaires, les chemins hors projet |
+| `write_file` | crée ou remplace un fichier (UTF-8, LF) | refuse `.git`, `.venv`, `.env*` et plus de 512 Ko |
+| `list_dir` | arborescence bornée (profondeur 1–5) | ignore `.git`, `.venv`, `__pycache__`, `node_modules` |
+| `search_code` | recherche regex, résultat `chemin:ligne: texte` | ignore secrets, binaires et fichiers de plus de 5 Mo |
+| `run_command` | commande de dev (`git`, `python`, `pytest`, `npm`…) | liste blanche, `shell=False`, timeout 1–300 s, refus de `git push`, `pip install`, des tubes et des `&&` |
 
-### 6. Implémenter la boucle agentique (`src/agent.py`)
+Le *handler* n'est exécuté **que** si le nom demandé existe dans le registre : aucune exécution
+dynamique arbitraire.
+
+### 6. Implémenter la boucle agentique — ✅ fait (`src/agent.py`)
+
+```python
+from src.agent import Agent
+from src.config import load_settings
+
+agent = Agent(load_settings())            # verbose=False pour un usage scripté
+resultat = agent.run("Ajoute une fonction somme(a, b) dans src/main.py")
+
+print(resultat.answer)                    # réponse finale
+print(resultat.summary())                 # final_answer | 2 itération(s) | 3 outil(s) | 1 234 tokens
+print(resultat.stopped_reason)            # final_answer, max_iterations, token_budget, error
+```
+
+Le déroulé effectif :
 
 ```text
 messages = [system, user]
 répéter jusqu'à réponse finale ou MAX_ITERATIONS :
-    réponse = llm.chat(messages, tools=TOOLS.schemas)
+    réponse = client.chat(messages, tools=registre.schemas)
     si réponse.tool_calls :
-        pour chaque appel : résultat = TOOLS[appel.nom].handler(**appel.arguments)
-        messages += [réponse assistant, résultats des outils]
-    sinon :
-        retourner réponse.texte
+        pour chaque appel : résultat = registre.execute(appel.name, appel.arguments)
+        messages += [réponse assistant, messages « tool »]
+    sinon : retourner réponse.texte
 ```
 
-Prévoir : arrêt propre sur `MAX_ITERATIONS`, remontée d'erreur d'outil **au LLM** (pour qu'il
-puisse se corriger) plutôt qu'un crash, et journalisation de chaque étape.
+Points implémentés : arrêt propre sur `MAX_ITERATIONS` et sur `--token-budget`, erreurs d'outil et
+JSON invalide **renvoyés au modèle** (aucun crash), protection anti-boucle (un appel strictement
+identique n'est pas réexécuté), journal JSONL de chaque étape, callback `on_event` pour une future
+interface.
 
-### 7. Sécurité et garde-fous (à faire dès la première version)
+### 7. Sécurité et garde-fous — ✅ en grande partie fait
 
-- **Sandbox** : résoudre chaque chemin avec `pathlib.Path.resolve()` et refuser tout chemin hors
-  du dossier du projet (protection contre `..` et les liens symboliques).
-- **Commandes shell** : liste blanche de commandes, `shell=False`, timeout, refus des commandes
-  destructrices sans confirmation interactive explicite.
-- **Écritures** : sauvegarde ou `git diff` avant modification, refus d'écraser un fichier hors
-  périmètre.
-- **Budget** : plafond de tokens/coût par session et nombre maximal d'itérations.
-- **Journal** : trace JSONL horodatée de chaque appel d'outil (audit et débogage).
+- **Sandbox** — ✅ `src/tools/sandbox.py` : chaque chemin passe par `Path.resolve()` puis doit être
+  le dossier du projet ou l'un de ses descendants. `..`, chemins absolus externes et liens
+  symboliques sortants sont refusés avant tout accès disque.
+- **Commandes shell** — ✅ liste blanche d'exécutables, `shell=False`, `stdin` fermé, timeout
+  (1–300 s), refus des motifs destructeurs (`git push`, `git reset --hard`, `pip install`, `npx`…)
+  et des tubes/redirections/`&&`.
+- **Écritures** — ✅ refus de `.git`, `.venv`, `node_modules` et de tout `.env*` (secrets) ;
+  réécriture UTF-8 avec fins de ligne LF. ⏳ Reste : `git diff` automatique avant modification.
+- **Budget** — ✅ `MAX_ITERATIONS` (défaut 15) et `--token-budget` optionnel.
+- **Journal** — ✅ `logs/session-*.jsonl` : un événement horodaté par ligne, contenus tronqués à
+  2 000 caractères. ⏳ Reste : confirmation interactive (`--yes`) pour les actions sensibles.
 
 ### 8. Confort et qualité
 
-- CLI avec `argparse` (ou `rich` pour l'affichage) : `--prompt`, `--model`, `--dry-run`,
-  `--yes` pour les confirmations.
-- Tests `pytest` sur le registre d'outils et la boucle agentique, avec un **client LLM factice**
-  (aucun appel réseau dans les tests).
-- Gestion du contexte : troncature/résumé de l'historique, injection de l'arborescence et du
+- CLI `argparse` — ✅ `-p/--prompt`, `--max-iterations`, `--token-budget`, `--log-dir`, `--no-log`,
+  `--stream`, `--dry-run`, `-q`. ⏳ Reste : `--model` en surcharge et `--yes` pour les
+  confirmations.
+- Tests `pytest` — ⏳ à brancher (décommenter `pytest` dans `requirements.txt`). Validation
+  actuelle : scripts hors ligne avec **client LLM factice** (46 vérifications d'outils,
+  22 vérifications de la boucle, 9 de bout en bout avec un faux serveur HTTP local).
+- Gestion du contexte — ⏳ troncature/résumé de l'historique, injection de l'arborescence et du
   `README` au démarrage, prise en compte du `git status` / `git diff`.
