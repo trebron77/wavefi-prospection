@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+# pytest 7+ : `pythonpath` evite tout sys.path.insert dans les tests.
+# "."  -> import du package `src` (from src.agent import Agent)
+# "tests" -> utilitaires partages (from helpers import FakeClient)
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+addopts = "-ra"

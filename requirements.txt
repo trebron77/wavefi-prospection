@@ -15,7 +15,7 @@ openai>=1.40.0
 python-dotenv>=1.0.1
 #
 # -----------------------------------------------------------------------------
-# Étape 3 - confort et tests (à décommenter le moment venu)
+# Développement et tests (installés avec le reste)
 # -----------------------------------------------------------------------------
-# rich>=13.7.0        # affichage CLI (panneaux, streaming, couleurs)
-# pytest>=8.0.0       # tests unitaires
+pytest>=8.0.0       # tests hors ligne : python -m pytest -q
+# rich>=13.7.0      # affichage CLI (panneaux, streaming, couleurs) - à venir

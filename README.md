@@ -4,12 +4,14 @@ Agent de développement autonome qui tourne **entièrement en local** : il reço
 langage naturel, raisonne, puis agit sur un projet (lire/écrire des fichiers, chercher dans le
 code, exécuter des commandes) en s'appuyant sur l'API d'un LLM.
 
-> **Statut : étapes 1 à 6 terminées — boucle agentique opérationnelle.**
+> **Statut : étapes 1 à 6 terminées — boucle agentique opérationnelle et testée.**
 > `src/config.py` charge et valide la configuration (`.env`), `src/llm_client.py` dialogue avec
 > toute API compatible OpenAI (texte, `tool_calls`, streaming, erreurs traduites),
 > `src/tools/` fournit cinq outils bornés par un bac à sable, et `src/agent.py` exécute la
 > boucle « raisonner → agir → observer » plafonnée par `MAX_ITERATIONS`, avec journal JSONL.
-> Restent les garde-fous interactifs et les tests `pytest`
+> La suite `pytest` (188 validations, aucun réseau) couvre configuration, bac à sable, registre,
+> outils, client LLM, boucle agentique et CLI.
+> Restent les garde-fous interactifs, l'interface `rich`/REPL et la gestion du contexte
 > (voir la [feuille de route](#feuille-de-route)).
 
 ## Objectifs
@@ -28,10 +30,18 @@ code, exécuter des commandes) en s'appuyant sur l'API d'un LLM.
 ```
 local-dev-agent-01/
 ├── README.md          # but du projet, usage, feuille de route
-├── requirements.txt   # openai + python-dotenv
+├── requirements.txt   # openai + python-dotenv + pytest
+├── pyproject.toml     # configuration pytest (pythonpath, options)
 ├── .env.example       # modèle de configuration à copier vers .env
 ├── .gitignore         # exclut venv, __pycache__, .env (clés API) et logs/
 ├── logs/              # journaux JSONL générés (créé au premier lancement)
+├── tests/
+│   ├── conftest.py    # fixtures : projet temporaire, sandbox, registre, settings
+│   ├── helpers.py     # FakeClient (LLM scripté) et arborescence de test
+│   ├── test_config.py        test_sandbox.py   test_registry.py
+│   ├── test_tools_files.py   test_tools_search.py   test_tools_shell.py
+│   ├── test_llm_client.py    test_agent.py     test_cli.py
+│   └── legacy/        # anciens scripts de vérification (_chk_*.py, _e2e_agent.py)
 └── src/
     ├── __init__.py    # marque src/ comme package Python
     ├── main.py        # point d'entrée : bannière, ou session complète avec -p
@@ -68,9 +78,9 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-> **Note — `requirements.txt`** : deux dépendances seulement — `openai` (client compatible
-> OpenAI, utilisé par `src/llm_client.py`) et `python-dotenv` (lecture de `.env` par
-> `src/config.py`). `rich` et `pytest` restent en commentaires (interface et tests à venir).
+> **Note — `requirements.txt`** : `openai` (client compatible OpenAI, utilisé par
+> `src/llm_client.py`), `python-dotenv` (lecture de `.env` par `src/config.py`) et `pytest`
+> (suite de tests hors ligne). `rich` reste en commentaire (interface à venir).
 
 ## Configuration
 
@@ -162,6 +172,25 @@ Endpoint : https://api.openai.com/v1
 Clé API  : sk-a...WXYZ
 [OK] Connexion établie. Réponse du modèle : 'OK'
 ```
+
+### Lancer les tests
+
+```powershell
+# Suite complète (hors ligne, aucun appel réseau, aucun fichier du projet modifié)
+.\\.venv\\Scripts\\python.exe -m pytest -q
+
+# Un module en particulier
+.\\.venv\\Scripts\\python.exe -m pytest tests/test_agent.py -v
+```
+
+Les tests s'appuient sur `tests/conftest.py` (projet temporaire, `Sandbox`, registre) et sur
+`tests/helpers.py` (`FakeClient`, qui rejoue des réponses scriptées au lieu d'appeler l'API).
+`pyproject.toml` déclare `pythonpath = [".", "tests"]`, ce qui permet d'écrire `from src...`
+comme dans le reste du projet.
+
+Les anciens scripts de vérification (`tests/legacy/_chk_tools.py`, `_chk_agent.py`,
+`_e2e_agent.py`) restent exécutables depuis la racine du projet ; ils ont servi de filet lors
+de la migration vers `pytest`.
 
 ### Utiliser le client depuis le code
 
@@ -325,8 +354,9 @@ interface.
 - CLI `argparse` — ✅ `-p/--prompt`, `--max-iterations`, `--token-budget`, `--log-dir`, `--no-log`,
   `--stream`, `--dry-run`, `-q`. ⏳ Reste : `--model` en surcharge et `--yes` pour les
   confirmations.
-- Tests `pytest` — ⏳ à brancher (décommenter `pytest` dans `requirements.txt`). Validation
-  actuelle : scripts hors ligne avec **client LLM factice** (46 vérifications d'outils,
-  22 vérifications de la boucle, 9 de bout en bout avec un faux serveur HTTP local).
+- Tests `pytest` — ✅ `tests/` : 188 validations hors ligne (1 test ignoré sous Windows faute de
+  privilèges pour les liens symboliques). Couverture : configuration, bac à sable, registre,
+  cinq outils, client LLM (texte, outils, flux, erreurs), boucle agentique (bornes, cache
+  anti-boucle, journal) et CLI (codes de sortie, `--dry-run`, `--no-log`, stdin).
 - Gestion du contexte — ⏳ troncature/résumé de l'historique, injection de l'arborescence et du
   `README` au démarrage, prise en compte du `git status` / `git diff`.
