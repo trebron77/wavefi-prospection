@@ -9,6 +9,7 @@ Utilisation :
     python src/agent.py -p "Résume la structure du projet"
     python src/agent.py -p "Ajoute une fonction somme dans src/main.py" --max-iterations 8
     python src/agent.py -p "Lance les tests" --yes     (sans confirmation des commandes)
+    python src/agent.py --repl           (session interactive multi-tours)
     python src/agent.py --dry-run        (aucun appel réseau)
 """
 
@@ -749,6 +750,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--stream", action="store_true", help="Afficher la réponse du modèle en flux."
     )
     parser.add_argument(
+        "--repl",
+        action="store_true",
+        help="Session interactive multi-tours (défaut sans -p dans un terminal).",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Afficher la configuration et les outils sans appeler le LLM.",
@@ -765,6 +771,37 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _configurer_sortie() -> None:
+    """Force l'UTF-8 sur les flux texte quand c'est possible.
+
+    Python utilise l'encodage local (cp1252 ou cp437 sous Windows) par défaut,
+    ce qui fait échouer l'affichage des accents et des flèches. Le mode
+    ``errors="replace"`` garantit qu'une écriture ne lève jamais
+    ``UnicodeEncodeError`` : mieux vaut un caractère substitué qu'une session
+    interrompue.
+    """
+    for flux in (sys.stdout, sys.stderr):
+        reconfigure = getattr(flux, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):  # flux non reconfigurable (test, capture)
+            pass
+
+
+def _stdin_is_tty() -> bool:
+    """Vrai si l'entrée standard est un terminal interactif.
+
+    Un tube, un fichier redirigé ou une entrée absente ne permettent pas de
+    répondre aux confirmations : ces cas sont traités comme non interactifs.
+    """
+    try:
+        return bool(sys.stdin is not None and sys.stdin.isatty())
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
 def _make_confirmation() -> Callable[[str, Dict[str, Any]], bool]:
     """Construit le callback de confirmation des outils sensibles.
 
@@ -779,11 +816,7 @@ def _make_confirmation() -> Callable[[str, Dict[str, Any]], bool]:
 
     def confirmer(name: str, arguments: Mapping[str, Any]) -> bool:
         resume = _format_arguments(arguments)
-        try:
-            interactif = bool(sys.stdin is not None and sys.stdin.isatty())
-        except (AttributeError, OSError, ValueError):
-            interactif = False
-        if not interactif:
+        if not _stdin_is_tty():
             print(
                 f"[REFUS] « {name}({resume}) » nécessite une confirmation : "
                 "aucun terminal interactif. Relancez avec --yes pour l'autoriser."
@@ -799,6 +832,31 @@ def _make_confirmation() -> Callable[[str, Dict[str, Any]], bool]:
     return confirmer
 
 
+def _run_repl(agent: Agent, args: argparse.Namespace) -> int:
+    """Lance la session interactive multi-tours (module :mod:`ui`).
+
+    Args:
+        agent: agent déjà configuré (confirmations, journal, modèle).
+        args: options de la ligne de commande (``--quiet``).
+
+    Returns:
+        Code de sortie : 0 session terminée, 130 interrompue par un signal.
+    """
+    try:  # exécution en package : python -m src.agent
+        from .ui import Repl, Ui
+    except ImportError:  # exécution directe : python src/agent.py
+        from ui import Repl, Ui
+
+    ui = Ui(quiet=args.quiet)
+    try:
+        return Repl(agent, ui).run()
+    except KeyboardInterrupt:  # filet de sécurité : Ctrl+C hors boucle
+        print("\n[INTERROMPU] Session arrêtée par l'utilisateur.")
+        return 130
+    finally:
+        ui.finish_stream()
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Point d'entrée CLI de l'agent.
 
@@ -809,6 +867,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         Code de sortie : 0 succès, 1 erreur, 2 arrêt sur borne, 130 interruption.
     """
     args = _build_parser().parse_args(argv)
+    if args.repl and (args.prompt or "").strip():
+        print("[ERREUR] --repl lance une session interactive : retirez -p/--prompt.")
+        return 1
+    _configurer_sortie()
 
     try:
         settings = load_settings()
@@ -848,19 +910,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     task = (args.prompt or "").strip()
-    if not task:
-        try:
-            if sys.stdin is not None and not sys.stdin.isatty():
+    repl = args.repl
+    if not task and not repl:
+        if _stdin_is_tty():
+            repl = True  # terminal : session multi-tours par défaut
+        else:
+            try:
                 task = sys.stdin.read().strip()
-        except (AttributeError, OSError):
-            task = ""
-    if not task:
+            except (AttributeError, OSError):
+                task = ""
+    if not task and not repl:
         try:
             task = input("Tâche à confier à l'agent > ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n[ERREUR] Aucune tâche fournie.")
             return 1
-    if not task:
+    if not task and not repl:
         print("[ERREUR] Aucune tâche fournie.")
         return 1
 
@@ -872,6 +937,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             agent.logger = EventLogger.for_session(directory)
         except OSError as exc:
             print(f"[AVERTISSEMENT] Journal désactivé : {exc}")
+
+    if repl:
+        try:
+            return _run_repl(agent, args)
+        finally:
+            agent.close()
 
     try:
         result = agent.run(task)

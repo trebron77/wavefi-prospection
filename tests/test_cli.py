@@ -399,3 +399,48 @@ def test_version_affichee(capsys):
     assert info.value.code == 0
     assert __version__ in capsys.readouterr().out
 
+
+# --- Session interactive (REPL)
+
+
+def test_option_repl_desactivee_par_defaut():
+    assert _build_parser().parse_args([]).repl is False
+    assert _build_parser().parse_args(["--repl"]).repl is True
+
+
+def test_repl_et_prompt_incompatibles(cli, capsys):
+    code = main(["--repl", "-p", "x", "--no-log"])
+
+    assert code == 1
+    assert "--repl" in capsys.readouterr().out
+    assert cli.instances == []
+
+
+def test_repl_lance_la_session(cli, monkeypatch, capsys):
+    def quitter(prompt=""):
+        return "/quit"
+
+    monkeypatch.setattr("builtins.input", quitter)
+
+    code = main(["--repl", "--no-log"])
+
+    agent = cli.instances[0]
+    assert code == 0
+    assert agent.tasks == []
+    assert agent.closed is True
+    assert "bient" in capsys.readouterr().out
+
+
+def test_terminal_sans_prompt_lance_le_repl(cli, monkeypatch, capsys):
+    def quitter(prompt=""):
+        return "/quit"
+
+    monkeypatch.setattr("sys.stdin", FauxTTY(""))
+    monkeypatch.setattr("builtins.input", quitter)
+
+    code = main(["--no-log"])
+
+    assert code == 0
+    assert cli.instances[0].tasks == []
+    assert "bient" in capsys.readouterr().out
+
