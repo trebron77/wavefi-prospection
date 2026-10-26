@@ -285,6 +285,8 @@ def test_summary_et_repr(settings, registry):
         {"max_iterations": 0},
         {"token_budget": 0},
         {"token_budget": -10},
+        {"context_tokens": 0},
+        {"context_tokens": -5},
     ],
 )
 def test_validations_de_construction(settings, registry, champs):
@@ -524,4 +526,160 @@ def test_capabilities_indique_la_confirmation(settings, registry):
 
     assert "non demandée (--yes)" in sans.capabilities()
     assert "demandée avant chaque outil sensible" in avec.capabilities()
+
+
+# --- Gestion du contexte : instantane du projet et budget d'historique
+
+
+def _messages_envoyes(client, index=-1):
+    """Messages transmis au modele lors de l'appel ``index``."""
+    return client.calls[index]["messages"]
+
+
+def _contenus(messages):
+    """Contenus textuels des messages (les messages d'outil sont sans role)."""
+    return [message.get("content") or "" for message in messages]
+
+
+def test_instantane_du_projet_injecte_une_seule_fois(settings, registry, projet):
+    evenements = []
+    client = FakeClient([reponse_finale("ok"), reponse_finale("suite")])
+    agent = Agent(
+        settings=settings,
+        client=client,
+        registry=registry,
+        root=projet,
+        initial_context=True,
+        verbose=False,
+        on_event=lambda nom, champs: evenements.append((nom, champs)),
+    )
+
+    agent.run("Premiere demande")
+    agent.run("Seconde demande")
+
+    premier = _messages_envoyes(client, 0)
+    assert premier[0]["role"] == "system"
+    assert "Instantané du projet" in premier[1]["content"]
+    assert "src/" in premier[1]["content"]
+    assert [nom for nom, _ in evenements].count("context_injected") == 1
+
+    # L'instantane reste dans l'historique, mais n'est jamais duplique.
+    second = _messages_envoyes(client)
+    assert sum("Instantané du projet" in texte for texte in _contenus(second)) == 1
+
+
+def test_instantane_desactive_par_defaut(settings, registry):
+    evenements = []
+    client = FakeClient([reponse_finale("ok")])
+    agent = Agent(
+        settings=settings,
+        client=client,
+        registry=registry,
+        verbose=False,
+        on_event=lambda nom, champs: evenements.append((nom, champs)),
+    )
+
+    agent.run("Bonjour")
+
+    assert [message["role"] for message in _messages_envoyes(client)] == [
+        "system",
+        "user",
+    ]
+    assert "context_injected" not in [nom for nom, _ in evenements]
+
+
+def test_instantane_mis_en_cache_apres_reset(settings, registry, projet, monkeypatch):
+    appels = []
+
+    def faux_contexte(root):
+        appels.append(root)
+        return "## Instantané du projet (test)"
+
+    monkeypatch.setattr(agent_module, "build_project_context", faux_contexte)
+    client = FakeClient([reponse_finale("ok"), reponse_finale("ok")])
+    agent = Agent(
+        settings=settings,
+        client=client,
+        registry=registry,
+        root=projet,
+        initial_context=True,
+        verbose=False,
+    )
+
+    agent.run("Un")
+    agent.reset_history()
+    agent.run("Deux")
+
+    # Le texte est calcule une fois puis reutilise apres /reset.
+    assert len(appels) == 1
+    contenus = _contenus(_messages_envoyes(client))
+    assert sum("Instantané du projet (test)" in texte for texte in contenus) == 1
+
+
+def test_instantane_en_echec_ne_bloque_pas(settings, registry, projet, monkeypatch):
+    def exploser(root):
+        raise RuntimeError("disque illisible")
+
+    monkeypatch.setattr(agent_module, "build_project_context", exploser)
+    evenements = []
+    client = FakeClient([reponse_finale("ok")])
+    agent = Agent(
+        settings=settings,
+        client=client,
+        registry=registry,
+        root=projet,
+        initial_context=True,
+        verbose=False,
+        on_event=lambda nom, champs: evenements.append((nom, champs)),
+    )
+
+    resultat = agent.run("Bonjour")
+
+    assert resultat.success is True
+    assert resultat.answer == "ok"
+    assert "context_injected" not in [nom for nom, _ in evenements]
+
+
+def test_historique_tronque_et_note_signalee(settings, registry):
+    evenements = []
+    client = FakeClient([reponse_finale("ok"), reponse_finale("ok")])
+    agent = Agent(
+        settings=settings,
+        client=client,
+        registry=registry,
+        context_tokens=60,
+        verbose=False,
+        on_event=lambda nom, champs: evenements.append((nom, champs)),
+    )
+
+    agent.run("premiere " + "a" * 400)
+    agent.run("seconde")
+
+    trims = [champs for nom, champs in evenements if nom == "context_trimmed"]
+    assert len(trims) == 1
+    assert trims[0]["omitted"] > 0
+    assert trims[0]["max_tokens"] == 60
+
+    messages = _messages_envoyes(client)
+    contenus = _contenus(messages)
+    assert messages[-1] == {"role": "user", "content": "seconde"}
+    assert any(texte.startswith("[contexte]") for texte in contenus)
+    # L'echange le plus ancien a bien ete retire, le dernier conserve.
+    assert not any("premiere" in texte for texte in contenus)
+
+
+def test_capabilities_indique_le_contexte(settings, registry, projet):
+    agent = Agent(
+        settings=settings,
+        client=FakeClient([]),
+        registry=registry,
+        root=projet,
+        context_tokens=4000,
+        initial_context=True,
+        verbose=False,
+    )
+
+    capacites = agent.capabilities()
+    assert "instantané injecté" in capacites
+    assert "4000" in capacites
 

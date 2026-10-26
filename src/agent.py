@@ -23,11 +23,13 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 try:  # exécution en package : python -m src.agent
     from . import __version__
     from .config import PROJECT_ROOT, ConfigError, Settings, load_settings
+    from .context import build_project_context, trim_messages
     from .llm_client import LLMClient, LLMError, LLMResponse, ToolCall
     from .tools import ToolRegistry, build_default_registry, read_git_diff
 except ImportError:  # exécution directe : python src/agent.py
     from __init__ import __version__
     from config import PROJECT_ROOT, ConfigError, Settings, load_settings
+    from context import build_project_context, trim_messages
     from llm_client import LLMClient, LLMError, LLMResponse, ToolCall
     from tools import ToolRegistry, build_default_registry, read_git_diff
 
@@ -179,6 +181,8 @@ class Agent:
         stream: bool = False,
         on_token: Optional[Callable[[str], None]] = None,
         confirm: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
+        context_tokens: Optional[int] = None,
+        initial_context: bool = False,
     ) -> None:
         """Prépare l'agent.
 
@@ -199,9 +203,14 @@ class Agent:
             confirm: callback ``(outil, arguments) -> bool`` consulté avant tout
                 outil ``dangerous`` (``run_command``). ``None`` = aucune
                 confirmation (comportement de ``--yes``).
+            context_tokens: budget estimé de l'historique envoyé au modèle ;
+                ``None`` = pas de troncature.
+            initial_context: injecter au premier tour un instantané du projet
+                (arborescence, extrait du README, ``git status``).
 
         Raises:
-            ValueError: ``max_iterations`` < 1 ou ``token_budget`` <= 0.
+            ValueError: ``max_iterations`` < 1, ``token_budget`` <= 0 ou
+                ``context_tokens`` <= 0.
             TypeError: ``confirm`` fourni mais non appelable.
         """
         self.settings = settings or load_settings()
@@ -226,6 +235,12 @@ class Agent:
         if confirm is not None and not callable(confirm):
             raise TypeError("confirm doit être appelable ou None.")
         self.confirm = confirm
+        if context_tokens is not None and int(context_tokens) <= 0:
+            raise ValueError("context_tokens doit être > 0 (ou None).")
+        self.context_tokens = int(context_tokens) if context_tokens is not None else None
+        self.initial_context = bool(initial_context)
+        self._context_cache: Optional[str] = None
+        self._context_injected = False
         self._history: List[Dict[str, Any]] = []
 
     @property
@@ -234,8 +249,13 @@ class Agent:
         return [dict(message) for message in self._history]
 
     def reset_history(self) -> None:
-        """Efface l'historique (l'agent redevient vierge pour la tâche suivante)."""
+        """Efface l'historique (l'agent redevient vierge pour la tâche suivante).
+
+        L'instantané du projet, s'il était injecté, le sera de nouveau à la
+        prochaine demande (le texte est déjà en cache).
+        """
         self._history = []
+        self._context_injected = False
 
     def __repr__(self) -> str:
         return (
@@ -277,6 +297,16 @@ class Agent:
         if not any(message.get("role") == "system" for message in messages):
             messages.insert(0, {"role": "system", "content": self.system_prompt})
         messages.append({"role": "user", "content": prompt})
+        self._injecter_contexte(messages)
+        messages, omis = trim_messages(messages, self.context_tokens)
+        if omis:
+            self._emit(
+                "context_trimmed",
+                f"[contexte] {omis} message(s) omis (budget = "
+                f"{self.context_tokens} tokens estimés)",
+                omitted=omis,
+                max_tokens=self.context_tokens,
+            )
 
         self._emit(
             "session_start",
@@ -379,6 +409,37 @@ class Agent:
         )
         return result
 
+    def _injecter_contexte(self, messages: List[Dict[str, Any]]) -> None:
+        """Insère l'instantané du projet une seule fois par conversation.
+
+        Le texte est ajouté comme second message système (juste après le prompt
+        système) pour ne pas perturber l'ordre des rôles attendu par l'API.
+
+        Args:
+            messages: conversation en cours de construction (modifiée sur place).
+        """
+        if not self.initial_context or self._context_injected:
+            return
+        contexte = self._project_context()
+        if not contexte:
+            return
+        messages.insert(1, {"role": "system", "content": contexte})
+        self._context_injected = True
+        self._emit(
+            "context_injected",
+            f"[contexte] instantané du projet injecté ({len(contexte)} caractères)",
+            chars=len(contexte),
+        )
+
+    def _project_context(self) -> str:
+        """Instantané du projet, calculé une seule fois puis mis en cache."""
+        if self._context_cache is None:
+            try:
+                self._context_cache = build_project_context(self.root)
+            except Exception:  # un instantané ne bloque jamais la session
+                self._context_cache = ""
+        return self._context_cache
+
     def _ask(self, messages: Sequence[Mapping[str, Any]], iteration: int) -> LLMResponse:
         """Envoie la conversation au modèle et journalise la réponse.
 
@@ -398,6 +459,7 @@ class Agent:
             f"[{iteration}/{self.max_iterations}] appel du modèle "
             f"({len(messages)} messages)…",
             iteration=iteration,
+            max_iterations=self.max_iterations,
             messages=len(messages),
         )
         response = self.client.chat(
@@ -592,6 +654,8 @@ class Agent:
             f"Bac à sable    : {self.root}",
             f"Itérations max : {self.max_iterations}",
             f"Budget tokens  : {self.token_budget or 'illimité'}",
+            f"Contexte projet: {'instantané injecté' if self.initial_context else 'non injecté'}",
+            f"Budget contexte: {self.context_tokens or 'illimité'} tokens estimés",
             "Confirmation   : "
             + (
                 "non demandée (--yes)"
@@ -649,6 +713,23 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Budget de tokens pour la tâche (illimité par défaut).",
+    )
+    parser.add_argument(
+        "--context-tokens",
+        type=int,
+        default=16000,
+        help=(
+            "Budget estimé de l'historique envoyé au modèle "
+            "(16000 par défaut, 0 = illimité)."
+        ),
+    )
+    parser.add_argument(
+        "--no-context",
+        action="store_true",
+        help=(
+            "Ne pas injecter l'instantané du projet au démarrage "
+            "(arborescence, README, git status)."
+        ),
     )
     parser.add_argument(
         "-y",
@@ -742,6 +823,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 1
         settings = replace(settings, model=model)
 
+    if args.context_tokens is not None and args.context_tokens < 0:
+        print("[ERREUR] --context-tokens doit être >= 0 (0 = illimité).")
+        return 1
+    budget_contexte = args.context_tokens or None
+
     try:
         agent = Agent(
             settings=settings,
@@ -750,6 +836,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             verbose=not args.quiet,
             stream=args.stream,
             confirm=None if args.yes else _make_confirmation(),
+            context_tokens=budget_contexte,
+            initial_context=not args.no_context,
         )
     except (ValueError, RuntimeError) as exc:
         print(f"[ERREUR] Initialisation impossible : {exc}")

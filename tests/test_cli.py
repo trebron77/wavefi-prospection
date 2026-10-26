@@ -199,6 +199,8 @@ def test_analyseur_valeurs_par_defaut():
     assert args.max_iterations is None
     assert args.model is None
     assert args.token_budget is None
+    assert args.context_tokens == 16000
+    assert args.no_context is False
     assert args.log_dir == "logs"
     assert args.no_log is False
     assert args.stream is False
@@ -218,6 +220,9 @@ def test_analyseur_options():
             "modele-cli",
             "--token-budget",
             "900",
+            "--context-tokens",
+            "4000",
+            "--no-context",
             "--log-dir",
             "tmp-logs",
             "--no-log",
@@ -232,6 +237,8 @@ def test_analyseur_options():
     assert args.max_iterations == 7
     assert args.model == "modele-cli"
     assert args.token_budget == 900
+    assert args.context_tokens == 4000
+    assert args.no_context is True
     assert args.log_dir == "tmp-logs"
     assert args.no_log is True
     assert args.stream is True
@@ -245,6 +252,43 @@ def test_option_inconnue_rejetee():
         _build_parser().parse_args(["--inexistant"])
 
     assert info.value.code == 2
+
+
+# --- Gestion du contexte (CLI)
+
+
+def test_contexte_projet_injecte_par_defaut(cli):
+    main(["-p", "x", "--no-log"])
+
+    kwargs = cli.instances[0].kwargs
+    assert kwargs["initial_context"] is True
+    assert kwargs["context_tokens"] == 16000
+
+
+def test_no_context_desactive_l_instantane(cli):
+    main(["-p", "x", "--no-log", "--no-context"])
+
+    assert cli.instances[0].kwargs["initial_context"] is False
+
+
+def test_context_tokens_transmis(cli):
+    main(["-p", "x", "--no-log", "--context-tokens", "2500"])
+
+    assert cli.instances[0].kwargs["context_tokens"] == 2500
+
+
+def test_context_tokens_zero_desactive_la_troncature(cli):
+    main(["-p", "x", "--no-log", "--context-tokens", "0"])
+
+    assert cli.instances[0].kwargs["context_tokens"] is None
+
+
+def test_context_tokens_negatif_rejete(cli, capsys):
+    code = main(["-p", "x", "--no-log", "--context-tokens", "-1"])
+
+    assert code == 1
+    assert "--context-tokens" in capsys.readouterr().out
+    assert cli.instances == []
 
 
 # --- Garde-fous CLI : modele force, confirmation et version
