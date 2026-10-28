@@ -24,6 +24,7 @@ import json
 import re
 import sys
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -62,11 +63,12 @@ RETRY_BACKOFF_SECONDS = 2.0
 MAX_TOKENS = 1800
 
 
-SYSTEM_PROMPT = """Tu es un rédacteur B2B spécialisé dans l'hôtellerie-restauration \
-en Polynésie française. Tu rédiges pour un prestataire qui propose une solution \
-de Wi-Fi marketing aux hôtels et restaurants : portail captif personnalisé, \
-collecte d'adresses e-mail avec consentement, demandes d'avis Google \
-automatisées, fidélisation des clients, promotion locale et analyse d'audience.
+SYSTEM_PROMPT = """Tu es un rédacteur B2B spécialisé dans les établissements \
+d'accueil en Polynésie française. Tu rédiges pour un prestataire qui propose \
+une solution de Wi-Fi marketing aux établissements d'accueil polynésiens : \
+portail captif personnalisé, collecte d'adresses e-mail avec consentement, \
+demandes d'avis Google automatisées, fidélisation des clients, promotion \
+locale et analyse d'audience.
 
 Rédige une séquence de prospection de trois emails en français :
 1. Premier contact : une accroche personnalisée, le bénéfice principal lié au \
@@ -77,8 +79,19 @@ supplémentaire et une nouvelle invitation à échanger.
 15 minutes, sans pression ni reproche.
 
 Règles de rédaction :
+- Chaque email commence exactement par « Ia ora na, » (avec la virgule), puis \
+une ligne vide. N'utilisez jamais « Bonjour », « Bonsoir », « Salut » ou une \
+autre formule d'ouverture.
 - Vouvoiement systématique : utilisez « vous », jamais « tu », « ton » ou « ta ».
 - Ton professionnel, chaleureux, simple et respectueux des usages polynésiens.
+- Ciblez uniquement la catégorie indiquée dans le prompt utilisateur. Si c'est \
+un hôtel, ne parlez que d'hôtels et de l'expérience de séjour ; si c'est un \
+restaurant, ne parlez que de restaurants et de l'expérience des convives. \
+N'évoquez jamais l'autre catégorie, même en exemple ou en comparaison.
+- Respectez l'orthographe et la grammaire françaises, en particulier \
+l'élision : écrivez « de l'Hôtel... », « de l'établissement... » ou \
+« de l'auberge... », mais « du Restaurant... » ou « de Maru Maru ». \
+N'écrivez jamais « de Hôtel » ni « de Restaurant ».
 - Restez concret et crédible : n'inventez aucun chiffre, client, partenariat, \
 témoignage ou caractéristique de l'entreprise.
 - Personnalisez avec le nom de l'entreprise, sa catégorie, sa ville et le cas \
@@ -112,6 +125,138 @@ def _text(value: Any) -> str:
     return str(value).strip()
 
 
+#: Formule d'ouverture imposée à chaque email.
+GREETING = "Ia ora na,"
+
+_GREETING_PREFIX = re.compile(
+    r"^\s*(?:ia\s+ora\s+na|bonjour|bonsoir|salut|hello)"
+    r"(?:\s+à\s+vous)?\s*[,!.]?\s*",
+    re.IGNORECASE,
+)
+_GREETING_LINE = re.compile(
+    r"^\s*(?:ia\s+ora\s+na|bonjour|bonsoir|salut|hello)"
+    r"(?:\s+à\s+vous)?\s*[,!.]?\s*\n+",
+    re.IGNORECASE,
+)
+
+
+def ensure_polynesian_greeting(body: str) -> str:
+    """Force le corps de l'email à commencer par « Ia ora na, ».
+
+    Cette normalisation déterministe complète la consigne du prompt : même si
+    le modèle produit une autre formule d'ouverture, le CSV final reste
+    conforme.
+
+    Args:
+        body: Corps brut renvoyé par DeepSeek.
+
+    Returns:
+        Le corps commençant exactement par ``Ia ora na,`` suivi d'une ligne
+        vide et du contenu d'origine.
+    """
+    text = (body or "").strip()
+    if not text:
+        return GREETING
+
+    text = _GREETING_LINE.sub("", text, count=1)
+    text = _GREETING_PREFIX.sub("", text, count=1)
+    text = text.lstrip()
+
+    return f"{GREETING}\n\n{text}" if text else GREETING
+
+
+def _normalize_for_match(value: str) -> str:
+    """Retire les accents et passe le texte en minuscules pour les tests."""
+    decomposed = unicodedata.normalize("NFKD", value)
+    return "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    ).lower()
+
+
+def _build_category_instruction(category: str) -> str:
+    """Construit la consigne de ciblage stricte selon la catégorie du lead.
+
+    Un hôtel ne doit jamais être comparé à un restaurant, et inversement.
+
+    Args:
+        category: Catégorie issue du CSV (ex. ``"Hôtel"``).
+
+    Returns:
+        La consigne à insérer dans le prompt utilisateur.
+    """
+    normalized = _normalize_for_match(category)
+    if any(
+        token in normalized
+        for token in ("hotel", "pension", "resort", "auberge", "hebergement")
+    ):
+        return (
+            "Cette entreprise est un hôtel. Dans la phrase d'introduction et "
+            "dans tous les exemples, ne parlez que d'hôtels : séjour, chambres, "
+            "réception, arrivées et départs, clients en séjour. Ne mentionnez "
+            "jamais les restaurants, les convives, les repas ou le service en "
+            "salle."
+        )
+    if any(
+        token in normalized
+        for token in (
+            "restaurant",
+            "restauration",
+            "brasserie",
+            "bistrot",
+            "cafe",
+            "snack",
+            "roulotte",
+        )
+    ):
+        return (
+            "Cette entreprise est un restaurant. Dans la phrase d'introduction "
+            "et dans tous les exemples, ne parlez que de restaurants : convives, "
+            "service, repas, réservations, clients de passage et habitués. Ne "
+            "mentionnez jamais les hôtels, les chambres, la réception ou les "
+            "clients en séjour."
+        )
+    return (
+        f"Cette entreprise appartient à la catégorie « {category} ». Utilisez "
+        "un vocabulaire adapté à cette catégorie et ne mélangez pas les "
+        "univers hôtelier et restauration."
+    )
+
+
+def _starts_with_vowel_sound(company: str) -> bool:
+    """Indique si un nom d'entreprise appelle l'élision ``de l'``."""
+    cleaned = company.strip()
+    if not cleaned:
+        return False
+    first = cleaned[0].lower()
+    if first in "aàâäeéèêëiîïoôöuùûüyÿœæ":
+        return True
+    return cleaned.lower().startswith(
+        ("hôtel", "hotel", "hôtellerie", "hotellerie", "auberge")
+    )
+
+
+def _build_elision_instruction(company: str) -> str:
+    """Construit la consigne d'élision adaptée au nom de l'entreprise.
+
+    Args:
+        company: Nom de l'entreprise.
+
+    Returns:
+        La consigne à insérer dans le prompt utilisateur.
+    """
+    if _starts_with_vowel_sound(company):
+        return (
+            f"Le nom « {company} » commence par une voyelle ou un h muet : "
+            f"utilisez l'élision, par exemple « de l'{company} » ou "
+            f"« à l'{company} », et n'écrivez jamais « de {company} »."
+        )
+    return (
+        f"Le nom « {company} » commence par une consonne : n'ajoutez pas "
+        f"d'élision artificielle. Écrivez par exemple « de {company} » et "
+        "n'ajoutez pas de « l' » devant le nom."
+    )
+
+
 def build_lead_prompt(lead: Mapping[str, str]) -> str:
     """Construit le prompt utilisateur personnalisé pour un lead.
 
@@ -132,6 +277,9 @@ def build_lead_prompt(lead: Mapping[str, str]) -> str:
     if not score:
         match = re.search(r"\d+(?:[.,]\d+)?", probability)
         score = match.group(0) if match else "Non renseigné"
+
+    category_instruction = _build_category_instruction(category)
+    elision_instruction = _build_elision_instruction(company)
 
     context: List[str] = []
     city = _text(lead.get("ville"))
@@ -163,10 +311,14 @@ def build_lead_prompt(lead: Mapping[str, str]) -> str:
 - Cas d'usage recommandé : {use_case}
 {context_block}
 
-La séquence doit être adaptée à un hôtel ou restaurant en Polynésie française, \
-en vouvoiement, avec un ton professionnel et chaleureux. Utilise le cas d'usage \
-recommandé comme fil conducteur sans le présenter comme une évidence acquise. \
-Ne cite aucun score ni aucune donnée interne dans les emails.
+La séquence doit être adaptée exclusivement à la catégorie « {category} » en \
+Polynésie française, en vouvoiement, avec un ton professionnel et chaleureux.
+{category_instruction}
+{elision_instruction}
+Chaque email doit commencer exactement par « Ia ora na, » (avec la virgule).
+Utilise le cas d'usage recommandé comme fil conducteur sans le présenter comme \
+une évidence acquise. Ne cite aucun score ni aucune donnée interne dans les \
+emails.
 """
 
 
@@ -235,6 +387,7 @@ def parse_emails(content: str) -> List[Dict[str, str]]:
             raise EmailGenerationError(f"L'email {index} n'a pas d'objet.")
         if not body:
             raise EmailGenerationError(f"L'email {index} n'a pas de corps.")
+        body = ensure_polynesian_greeting(body)
         emails.append({"objet": subject, "corps": body})
     return emails
 
