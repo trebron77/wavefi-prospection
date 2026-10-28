@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Prospection Wi-Fi — Polynésie française</title>
+    <style>
+
+:root {
+    --teal-900: #134e4a;
+    --teal-800: #115e59;
+    --teal-700: #0f766e;
+    --sky-700: #0369a1;
+    --blue-700: #1d4ed8;
+    --ink: #0f172a;
+    --muted: #64748b;
+    --line: #dbe4ee;
+    --surface: #ffffff;
+    --stripe: #f6f9fc;
+    --hover: #dff7f3;
+    --shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--ink);
+    background:
+        radial-gradient(circle at 8% 0%, rgba(13, 148, 136, 0.18), transparent 32rem),
+        linear-gradient(180deg, #e7eef5 0, #f8fafc 26rem);
+    font-family: "Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+}
+
+.hero {
+    padding: 2.6rem clamp(1.2rem, 4vw, 4rem) 2.4rem;
+    color: #fff;
+    background: linear-gradient(118deg, var(--teal-800), var(--sky-700) 58%, var(--blue-700));
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+
+.hero .eyebrow {
+    margin: 0 0 0.45rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    opacity: 0.78;
+}
+
+.hero h1 {
+    margin: 0;
+    max-width: 70rem;
+    font-size: clamp(1.8rem, 3.3vw, 3rem);
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+}
+
+.hero p {
+    margin: 0.9rem 0 0;
+    max-width: 66rem;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+main {
+    width: min(100% - 2rem, 1800px);
+    margin: -1.3rem auto 2rem;
+    position: relative;
+}
+
+.cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.3rem;
+}
+
+.card {
+    padding: 1.15rem 1.3rem;
+    background: var(--surface);
+    border: 1px solid rgba(219, 228, 238, 0.9);
+    border-radius: 16px;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.1);
+}
+
+.card .label {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.card strong {
+    color: var(--teal-800);
+    font-size: 1.8rem;
+    line-height: 1;
+}
+
+.table-wrap {
+    overflow: auto;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+}
+
+.leads-table {
+    width: 100%;
+    min-width: 1500px;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.9rem;
+}
+
+.leads-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: 0.95rem 1rem;
+    color: #f8fafc;
+    background: linear-gradient(180deg, var(--teal-700), var(--teal-800));
+    border-right: 1px solid rgba(255, 255, 255, 0.14);
+    border-bottom: 1px solid var(--teal-900);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-align: left;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.leads-table thead th:first-child {
+    border-top-left-radius: 17px;
+}
+
+.leads-table thead th:last-child {
+    border-right: 0;
+    border-top-right-radius: 17px;
+}
+
+.leads-table tbody td {
+    max-width: 30rem;
+    padding: 0.9rem 1rem;
+    border-right: 1px solid #edf2f7;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    overflow-wrap: anywhere;
+}
+
+.leads-table tbody tr:nth-child(odd) {
+    background: var(--surface);
+}
+
+.leads-table tbody tr:nth-child(even) {
+    background: var(--stripe);
+}
+
+.leads-table tbody tr:hover {
+    background: var(--hover);
+}
+
+.leads-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.leads-table tbody td:first-child {
+    color: var(--teal-800);
+    font-weight: 700;
+    text-transform: capitalize;
+}
+
+.leads-table tbody td:nth-child(2) {
+    color: var(--ink);
+    font-weight: 600;
+}
+
+footer {
+    padding: 0 1rem 2rem;
+    color: var(--muted);
+    font-size: 0.82rem;
+    text-align: center;
+}
+
+.muted {
+    color: var(--muted);
+}
+
+@media (max-width: 700px) {
+    body {
+        font-size: 14px;
+    }
+
+    .hero {
+        padding-top: 2rem;
+        padding-bottom: 2.2rem;
+    }
+
+    main {
+        width: min(100% - 1rem, 1800px);
+    }
+}
+
+@media print {
+    body {
+        background: #fff;
+    }
+
+    .hero {
+        color: var(--ink);
+        background: #fff;
+        box-shadow: none;
+    }
+
+    .hero .eyebrow,
+    .hero p,
+    .card .label,
+    footer {
+        color: #475569;
+    }
+
+    .cards,
+    .table-wrap {
+        box-shadow: none;
+    }
+
+    .table-wrap {
+        overflow: visible;
+    }
+}
+
+    </style>
+</head>
+<body>
+    <header class="hero">
+        <p class="eyebrow">Tableau de bord commercial</p>
+        <h1>Prospection Wi-Fi — Polynésie française</h1>
+        <p>
+            3 lead(s) classé(s) par probabilité d'achat
+            décroissante. Les scores et cas d'usage proviennent du modèle Jev
+            (TypeSafe).
+        </p>
+    </header>
+    <main>
+        <section class="cards" aria-label="Indicateurs clés">
+            <article class="card">
+                <span class="label">Leads qualifiés</span>
+                <strong>3</strong>
+            </article>
+            <article class="card">
+                <span class="label">Priorité haute</span>
+                <strong>1</strong>
+            </article>
+            <article class="card">
+                <span class="label">Probabilité moyenne</span>
+                <strong>63 %</strong>
+            </article>
+        </section>
+        <div class="table-wrap">
+            <table class="dataframe leads-table" id="leads-table">
+  <thead>
+    <tr style="text-align: right;">
+      <th>Priorité</th>
+      <th>Nom / enseigne</th>
+      <th>Catégorie</th>
+      <th>Ville</th>
+      <th>Score /100</th>
+      <th>Probabilité d'achat</th>
+      <th>Cas d'usage recommandé</th>
+      <th>Justification</th>
+      <th>Téléphone</th>
+      <th>Site web</th>
+      <th>Email</th>
+      <th>Adresse</th>
+      <th>Île</th>
+      <th>Note Google</th>
+      <th>Nombre d'avis</th>
+      <th>Fiche Google Maps</th>
+      <th>Poste</th>
+      <th>Entreprise</th>
+      <th>Profil LinkedIn</th>
+      <th>Source</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>haute</td>
+      <td>Boutique Hotel Kon Tiki Tahiti</td>
+      <td>Hôtel</td>
+      <td>Papeete</td>
+      <td>76</td>
+      <td>Oui (76 %)</td>
+      <td>Boost d'avis Google</td>
+      <td>Jev estime « Oui » à 76 % (confiance 0,52) ; cas d'usage « Boost d'avis Google » (62 %).</td>
+      <td>+689 40 54 03 00</td>
+      <td>https://kontikitahiti.com/</td>
+      <td></td>
+      <td>23 Bd de la Reine Pomare IV, Papeete 98714, Polynésie française</td>
+      <td></td>
+      <td>4.2</td>
+      <td>480</td>
+      <td>https://www.google.com/maps/search/?api=1&amp;query=Boutique%20Hotel%20Kon%20Tiki%20Tahiti&amp;query_place_id=ChIJLVe6Bjg7mnYRTXZYX6Mto1I</td>
+      <td></td>
+      <td></td>
+      <td></td>
+      <td>google_maps</td>
+    </tr>
+    <tr>
+      <td>moyenne</td>
+      <td>Maru Maru</td>
+      <td>Restaurant</td>
+      <td>Papeete</td>
+      <td>57</td>
+      <td>Oui (57 %)</td>
+      <td>Boost d'avis Google</td>
+      <td>Jev estime « Oui » à 57 % (confiance 0,14) ; cas d'usage « Boost d'avis Google » (68 %).</td>
+      <td>+689 40 45 20 20</td>
+      <td>https://www.google.com/maps/search/?api=1&amp;query=Maru%20Maru&amp;query_place_id=ChIJm83YYLs7mnYR_eguPwPqd7M</td>
+      <td></td>
+      <td>Papeete 98714, Polynésie française</td>
+      <td></td>
+      <td>4.7</td>
+      <td>173</td>
+      <td>https://www.google.com/maps/search/?api=1&amp;query=Maru%20Maru&amp;query_place_id=ChIJm83YYLs7mnYR_eguPwPqd7M</td>
+      <td></td>
+      <td></td>
+      <td></td>
+      <td>google_maps</td>
+    </tr>
+    <tr>
+      <td>moyenne</td>
+      <td>Hôtel Reva Tahiti</td>
+      <td>Hôtel</td>
+      <td>Papeete</td>
+      <td>56</td>
+      <td>Oui (56 %)</td>
+      <td>Boost d'avis Google</td>
+      <td>Jev estime « Oui » à 56 % (confiance 0,12) ; cas d'usage « Boost d'avis Google » (56 %).</td>
+      <td>+689 40 54 42 30</td>
+      <td>https://www.hotelrevatahiti.com/</td>
+      <td></td>
+      <td>BP 460, Papeete 98713, Polynésie française</td>
+      <td></td>
+      <td>4.6</td>
+      <td>82</td>
+      <td>https://www.google.com/maps/search/?api=1&amp;query=H%C3%B4tel%20Reva%20Tahiti&amp;query_place_id=ChIJtUUHYQA7mnYRNjXPIKfgCBg</td>
+      <td></td>
+      <td></td>
+      <td></td>
+      <td>google_maps</td>
+    </tr>
+  </tbody>
+</table>
+        </div>
+    </main>
+    <footer>
+        Généré le 28/10/2026 à 11:52 — fichier autonome, aucune connexion requise
+        pour l'affichage.
+    </footer>
+</body>
+</html>

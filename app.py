@@ -27,12 +27,22 @@ if prompt := st.chat_input("Que dois-je faire ?"):
                 "--yes" 
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+            # Exécution avec gestion des erreurs d'encodage
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                encoding="utf-8",
+                errors="replace"
+            )
             
             if result.returncode == 0:
                 reponse = result.stdout
                 st.markdown(reponse)
                 st.session_state.messages.append({"role": "assistant", "content": reponse})
             else:
-                st.error(f"Erreur de l'agent :\n{result.stderr}")
-                
+                st.error("L'agent a rencontré une erreur :")
+                st.code(result.stderr, language="bash")
+                if result.stdout:
+                    st.text("Sortie standard :")
+                    st.code(result.stdout, language="bash")

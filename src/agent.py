@@ -50,11 +50,20 @@ STOP_MAX_ITERATIONS = "max_iterations"
 STOP_TOKEN_BUDGET = "token_budget"
 STOP_ERROR = "error"
 
+#: Valeurs acceptees par le parametre ``tool_choice`` du protocole OpenAI.
+TOOL_CHOICE_VALUES = ("auto", "required", "none")
+
+#: Strategie par defaut : le modele decide lui-meme d'appeler un outil.
+DEFAULT_TOOL_CHOICE = "auto"
+
 SYSTEM_PROMPT = """Tu es un agent de développement autonome qui travaille sur un projet \
 local, en binôme avec un utilisateur.
 
 Règles de travail :
 - Réponds en français, de façon concise et factuelle.
+- Dès qu'une action est demandée (créer, lire, lister, modifier, exécuter), appelle
+  l'outil adapté au lieu d'annoncer ce que tu ferais : l'utilisateur attend le résultat,
+  pas une promesse ni une demande de confirmation supplémentaire.
 - Observe avant d'agir : ne suppose jamais le contenu d'un fichier, lis-le avec read_file.
 - write_file remplace tout le fichier : relis-le d'abord et fournis le contenu complet.
 - Vérifie ton travail avec run_command (tests, compilation, git diff) quand c'est pertinent.
@@ -184,6 +193,7 @@ class Agent:
         confirm: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
         context_tokens: Optional[int] = None,
         initial_context: bool = False,
+        tool_choice: Optional[str] = None,
     ) -> None:
         """Prépare l'agent.
 
@@ -208,10 +218,14 @@ class Agent:
                 ``None`` = pas de troncature.
             initial_context: injecter au premier tour un instantané du projet
                 (arborescence, extrait du README, ``git status``).
+            tool_choice: stratégie d'appel des outils : ``"auto"`` (défaut, le
+                modèle décide), ``"required"`` (imposer un appel d'outil au
+                premier tour, puis revenir à ``"auto"`` pour laisser le modèle
+                conclure) ou ``"none"`` (aucun outil : conversation pure).
 
         Raises:
-            ValueError: ``max_iterations`` < 1, ``token_budget`` <= 0 ou
-                ``context_tokens`` <= 0.
+            ValueError: ``max_iterations`` < 1, ``token_budget`` <= 0,
+                ``context_tokens`` <= 0 ou ``tool_choice`` inconnu.
             TypeError: ``confirm`` fourni mais non appelable.
         """
         self.settings = settings or load_settings()
@@ -240,6 +254,13 @@ class Agent:
             raise ValueError("context_tokens doit être > 0 (ou None).")
         self.context_tokens = int(context_tokens) if context_tokens is not None else None
         self.initial_context = bool(initial_context)
+        choix = (tool_choice or DEFAULT_TOOL_CHOICE).strip().lower()
+        if choix not in TOOL_CHOICE_VALUES:
+            raise ValueError(
+                f"tool_choice doit être l'un de "
+                f"{', '.join(TOOL_CHOICE_VALUES)} (reçu : {tool_choice!r})."
+            )
+        self.tool_choice = choix
         self._context_cache: Optional[str] = None
         self._context_injected = False
         self._history: List[Dict[str, Any]] = []
@@ -441,6 +462,23 @@ class Agent:
                 self._context_cache = ""
         return self._context_cache
 
+    def _tool_choice_pour(self, iteration: int) -> str:
+        """Stratégie ``tool_choice`` transmise pour cette itération.
+
+        ``"required"`` n'est appliqué qu'au premier tour : au-delà, le modèle
+        doit pouvoir conclure par une réponse finale, sinon il appellerait des
+        outils jusqu'à la borne ``max_iterations``.
+
+        Args:
+            iteration: numéro d'itération courant (1 = premier appel).
+
+        Returns:
+            ``"auto"``, ``"required"`` ou ``"none"``.
+        """
+        if self.tool_choice == "required" and iteration > 1:
+            return "auto"
+        return self.tool_choice
+
     def _ask(self, messages: Sequence[Mapping[str, Any]], iteration: int) -> LLMResponse:
         """Envoie la conversation au modèle et journalise la réponse.
 
@@ -455,17 +493,23 @@ class Agent:
             LLMError: erreur réseau, d'authentification ou de format.
             ConfigError: configuration incomplète (clé API absente).
         """
+        choix_outils = self._tool_choice_pour(iteration)
+        nb_outils = len(self.registry)
         self._emit(
             "llm_request",
             f"[{iteration}/{self.max_iterations}] appel du modèle "
-            f"({len(messages)} messages)…",
+            f"({len(messages)} messages, {nb_outils} outils, "
+            f"tool_choice={choix_outils})…",
             iteration=iteration,
             max_iterations=self.max_iterations,
             messages=len(messages),
+            tools=nb_outils,
+            tool_choice=choix_outils,
         )
         response = self.client.chat(
             messages,
             tools=self.registry.schemas,
+            tool_choice=choix_outils,
             stream=self.stream,
             on_token=self.on_token,
         )
@@ -657,6 +701,9 @@ class Agent:
             f"Budget tokens  : {self.token_budget or 'illimité'}",
             f"Contexte projet: {'instantané injecté' if self.initial_context else 'non injecté'}",
             f"Budget contexte: {self.context_tokens or 'illimité'} tokens estimés",
+            "Appels d'outils: "
+            + self.tool_choice
+            + (" (un appel imposé au premier tour)" if self.tool_choice == "required" else ""),
             "Confirmation   : "
             + (
                 "non demandée (--yes)"
@@ -748,6 +795,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--stream", action="store_true", help="Afficher la réponse du modèle en flux."
+    )
+    parser.add_argument(
+        "--tool-choice",
+        choices=TOOL_CHOICE_VALUES,
+        default=None,
+        help=(
+            "Stratégie d'appel des outils : « auto » (défaut, le modèle décide), "
+            "« required » (imposer un outil au premier tour, puis laisser "
+            "conclure) ou « none » (aucun outil)."
+        ),
     )
     parser.add_argument(
         "--repl",
@@ -900,6 +957,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             confirm=None if args.yes else _make_confirmation(),
             context_tokens=budget_contexte,
             initial_context=not args.no_context,
+            tool_choice=args.tool_choice,
         )
     except (ValueError, RuntimeError) as exc:
         print(f"[ERREUR] Initialisation impossible : {exc}")

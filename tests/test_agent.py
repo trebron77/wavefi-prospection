@@ -683,3 +683,93 @@ def test_capabilities_indique_le_contexte(settings, registry, projet):
     assert "instantané injecté" in capacites
     assert "4000" in capacites
 
+
+
+def test_tool_choice_auto_par_defaut(settings, registry):
+    client = FakeClient([reponse_finale("rien a faire")])
+    agent = Agent(settings=settings, client=client, registry=registry, verbose=False)
+
+    agent.run("Bonjour")
+
+    assert agent.tool_choice == "auto"
+    assert client.calls[0]["extra"]["tool_choice"] == "auto"
+    assert client.calls[0]["tools"] is not None
+
+
+def test_tool_choice_required_impose_le_premier_tour(settings, registry):
+    client = FakeClient(
+        [
+            reponse_outil("list_dir", {"path": "src"}, call_id="c1"),
+            reponse_finale("Explore.", total_tokens=3),
+        ]
+    )
+    agent = Agent(
+        settings=settings,
+        client=client,
+        registry=registry,
+        tool_choice="required",
+        verbose=False,
+    )
+
+    resultat = agent.run("Explore src")
+
+    assert resultat.tool_calls == 1
+    # Le premier tour impose un outil, le second laisse le modele conclure.
+    assert client.calls[0]["extra"]["tool_choice"] == "required"
+    assert client.calls[1]["extra"]["tool_choice"] == "auto"
+
+
+def test_tool_choice_none_desactive_les_outils(settings, registry):
+    client = FakeClient([reponse_finale("je decris la procedure")])
+    agent = Agent(
+        settings=settings,
+        client=client,
+        registry=registry,
+        tool_choice="none",
+        verbose=False,
+    )
+
+    resultat = agent.run("Cree src/nouveau.py")
+
+    assert resultat.tool_calls == 0
+    assert resultat.stopped_reason == STOP_FINAL
+    assert client.calls[0]["extra"]["tool_choice"] == "none"
+
+
+def test_tool_choice_invalide_rejete(settings, registry):
+    with pytest.raises(ValueError, match="tool_choice"):
+        Agent(settings=settings, registry=registry, tool_choice="parfois", verbose=False)
+
+
+def test_requete_journalise_les_outils_transmis(settings, registry):
+    evenements = []
+    client = FakeClient([reponse_finale("fini")])
+    agent = Agent(
+        settings=settings,
+        client=client,
+        registry=registry,
+        verbose=False,
+        on_event=lambda nom, champs: evenements.append((nom, champs)),
+    )
+
+    agent.run("Bonjour")
+
+    (_, champs), = [item for item in evenements if item[0] == "llm_request"]
+    assert champs["tools"] == len(registry) == 5
+    assert champs["tool_choice"] == "auto"
+    assert len(client.calls[0]["tools"]) == 5
+
+
+def test_capabilities_indique_le_choix_d_outils(settings, registry):
+    agent = Agent(
+        settings=settings,
+        client=FakeClient([]),
+        registry=registry,
+        tool_choice="required",
+        verbose=False,
+    )
+
+    capacites = agent.capabilities()
+    assert "Appels d'outils: required" in capacites
+    assert "imposé au premier tour" in capacites
+

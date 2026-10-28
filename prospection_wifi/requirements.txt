@@ -1,0 +1,18 @@
+# =============================================================================
+# Tunnel de prospection Wi-Fi - Polynésie française
+# =============================================================================
+# Prérequis : Python 3.9+
+# Installation : python -m pip install -r requirements.txt
+#
+# pandas        : génération du tableau de bord HTML (dashboard.py)
+# requests      : appels HTTP aux API Apify et TypeSafe (Jeff)
+# python-dotenv : lecture des clés d'API depuis le fichier .env
+# openai        : client compatible OpenAI, utilisé pour l'API DeepSeek
+#                 (base_url = https://api.deepseek.com)
+#
+# Aucune de ces bibliothèques n'est nécessaire pour l'agent de src/ :
+# ce fichier est autonome et ne remplace pas le requirements.txt racine.
+pandas>=2.0.0
+requests>=2.31.0
+python-dotenv>=1.0.1
+openai>=1.40.0

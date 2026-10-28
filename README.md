@@ -13,7 +13,7 @@ code, exécuter des commandes) en s'appuyant sur l'API d'un LLM.
 > approuver en bloc), `src/context.py` borne l'historique et amorce la session par un instantané
 > du projet, et `src/ui.py` propose une **session interactive multi-tours** rendue avec `rich`
 > (panneaux, tableaux, flux) et des commandes `/aide`, `/reset`, `/quit`…
-> La suite `pytest` (265 validations, aucun réseau) couvre configuration, bac à sable, registre,
+> La suite `pytest` (274 validations, aucun réseau) couvre configuration, bac à sable, registre,
 > outils, lecture git, client LLM, boucle agentique, gestion du contexte, interface et CLI.
 
 ## Objectifs
@@ -142,23 +142,44 @@ Aperçu d'une session :
 
 ```text
 [agent] modèle=gpt-4o-mini | outils=5 | itérations max=15
-[1/15] appel du modèle (2 messages)…
+[1/15] appel du modèle (2 messages, 5 outils, tool_choice=auto)…
   ← réponse reçue : 0 caractère(s), outils demandés : read_file
   → read_file({"max_lines": 60, "path": "src/main.py"})
   ← read_file : ok (412 caractères)
-[2/15] appel du modèle (5 messages)…
+[2/15] appel du modèle (5 messages, 5 outils, tool_choice=auto)…
   ← réponse reçue : 187 caractère(s), outils demandés : aucun
 [agent] final_answer | 2 itération(s) | 1 outil(s) | 1 234 tokens
 ```
 
 Options : `--model`, `--max-iterations`, `--token-budget`, `--context-tokens`, `--no-context`,
-`-y/--yes`, `--repl`, `--log-dir`, `--no-log`, `--stream`, `--dry-run`, `-q`, `--version`.
+`-y/--yes`, `--repl`, `--log-dir`, `--no-log`, `--stream`, `--tool-choice`, `--dry-run`,
+`-q`, `--version`.
 Codes de sortie : `0` réponse finale, `1` erreur de configuration, `2` borne atteinte
 (`max_iterations` ou `token_budget`), `130` interruption.
 
 Avant chaque `run_command`, l'agent demande une confirmation (`o`/`n`).
 `-y/--yes` approuve d'avance ; sans terminal interactif (pipe, CI), l'appel est **refusé**
 par défaut avec un rappel de `--yes` : aucune commande destructrice ne part en silence.
+
+### Forcer (ou interdire) les appels d'outils
+
+Par défaut (`--tool-choice auto`), c'est le modèle qui décide d'appeler un outil. Un modèle
+peut aussi répondre en texte — « je vais créer le fichier… » — sans jamais agir : la boucle
+s'arrête alors sur une réponse finale et les statistiques affichent `0 outil(s)`. Le journal
+JSONL le montre sans ambiguïté : `llm_request` indique les schémas réellement transmis
+(`tools`, `tool_choice`) et `llm_response` la liste `tool_calls` renvoyée par l'API.
+
+```powershell
+# Imposer une action au premier tour (puis « auto » pour laisser le modèle conclure)
+python src/agent.py -p "Crée hello.txt avec une ligne de test" --tool-choice required
+
+# Conversation pure : le modèle ne peut appeler aucun outil
+python src/agent.py -p "Explique la structure du projet" --tool-choice none
+```
+
+`--tool-choice required` ne s'applique qu'au **premier** tour : au-delà, l'agent repasse en
+`auto`, sinon le modèle appellerait des outils jusqu'à la borne `max_iterations` sans jamais
+pouvoir conclure. `--dry-run` affiche la stratégie retenue.
 
 Chaque session écrit `logs/session-AAAAMMJJ-HHMMSS.jsonl` : un événement JSON par ligne
 (`session_start`, `llm_request`, `llm_response`, `tool_call`, `tool_result`, `tool_approved`,
@@ -438,15 +459,15 @@ tests) et `confirm` (outils sensibles, voir §7).
 
 - CLI `argparse` — ✅ `-p/--prompt`, `--model`, `--max-iterations`, `--token-budget`,
   `--context-tokens`, `--no-context`, `-y/--yes`, `--repl`, `--log-dir`, `--no-log`, `--stream`,
-  `--dry-run`, `-q`, `--version`.
-- Tests `pytest` — ✅ `tests/` : 265 validations hors ligne (1 test ignoré sous Windows faute de
+  `--tool-choice auto|required|none`, `--dry-run`, `-q`, `--version`.
+- Tests `pytest` — ✅ `tests/` : 274 validations hors ligne (1 test ignoré sous Windows faute de
   privilèges pour les liens symboliques). Couverture : configuration, bac à sable, registre,
   cinq outils, lecture git, client LLM (texte, outils, flux, erreurs), boucle agentique (bornes,
   cache anti-boucle, journal, confirmation, diff avant écriture), gestion du contexte
   (estimation, troncature par échanges complets, instantané injecté une seule fois puis mis en
   cache, échec toléré), interface (`rich` et repli texte, commandes du REPL) et CLI (codes de
   sortie, `--dry-run`, `--no-log`, stdin, `--model`, `--yes`, `--context-tokens`, `--no-context`,
-  `--version`).
+  `--tool-choice`, `--version`).
 - Gestion du contexte — ✅ `src/context.py` : estimation ≈ 4 caractères/token,
   `trim_messages` qui préserve le prompt système et les derniers échanges entiers (paires
   `assistant(tool_calls)`/`tool` jamais coupées) avec note `[contexte]`, et

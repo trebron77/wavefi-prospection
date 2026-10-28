@@ -137,6 +137,26 @@ def test_option_stream_transmise(cli):
     assert agent.kwargs["max_iterations"] == 3
 
 
+def test_option_tool_choice_transmise(cli):
+    main(["-p", "x", "--no-log", "--tool-choice", "required"])
+
+    assert cli.instances[0].kwargs["tool_choice"] == "required"
+
+
+def test_option_tool_choice_par_defaut(cli):
+    main(["-p", "x", "--no-log"])
+
+    # None : l'agent applique sa valeur par defaut ("auto").
+    assert cli.instances[0].kwargs["tool_choice"] is None
+
+
+def test_option_tool_choice_invalide_rejetee():
+    with pytest.raises(SystemExit) as info:
+        _build_parser().parse_args(["--tool-choice", "parfois"])
+
+    assert info.value.code == 2
+
+
 def test_tache_lue_sur_entree_standard(cli, monkeypatch):
     monkeypatch.setattr("sys.stdin", io.StringIO("liste les fichiers\n"))
 
@@ -204,6 +224,7 @@ def test_analyseur_valeurs_par_defaut():
     assert args.log_dir == "logs"
     assert args.no_log is False
     assert args.stream is False
+    assert args.tool_choice is None
     assert args.dry_run is False
     assert args.quiet is False
     assert args.yes is False
@@ -227,6 +248,8 @@ def test_analyseur_options():
             "tmp-logs",
             "--no-log",
             "--stream",
+            "--tool-choice",
+            "none",
             "--dry-run",
             "-y",
             "-q",
@@ -242,6 +265,7 @@ def test_analyseur_options():
     assert args.log_dir == "tmp-logs"
     assert args.no_log is True
     assert args.stream is True
+    assert args.tool_choice == "none"
     assert args.dry_run is True
     assert args.quiet is True
     assert args.yes is True
