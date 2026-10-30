@@ -26,6 +26,15 @@ Utilisation
     python sender.py --delay 5       # espacement plus prudent
     python sender.py --sent-log envois.csv      # journal, anti-doublon
     python sender.py --sent-log envois.csv --force   # réenvoie quand même
+    python sender.py --business-hours   # mardi-jeudi, 8h-10h ou 13h-15h
+
+Créneaux de prospection
+-----------------------
+L'option ``--business-hours`` n'autorise l'envoi que du mardi au jeudi, de
+8h00 à 9h59 et de 13h00 à 14h59 (heure locale de la machine). Hors de ces
+créneaux, un avertissement est affiché et le script quitte avec le code 0,
+sans contacter Brevo. Sans cette option, aucun contrôle n'est appliqué ;
+``--dry-run`` ignore toujours la règle et affiche seulement l'aperçu.
 
 Prérequis Brevo
 ---------------
@@ -116,6 +125,38 @@ MAX_RETRY_AFTER_SECONDS = 60.0
 #: Codes HTTP qui interdisent de poursuivre le run.
 FATAL_STATUS_CODES = frozenset({401, 402, 403})
 
+#: Jours autorisés pour la prospection (``datetime.weekday`` : lundi = 0).
+BUSINESS_WEEKDAYS = frozenset({1, 2, 3})
+
+#: Créneaux autorisés, bornes incluses, en (h, m) de début et de fin.
+BUSINESS_SLOTS: Tuple[Tuple[int, int, int, int], ...] = (
+    (8, 0, 9, 59),
+    (13, 0, 14, 59),
+)
+
+#: Noms français des jours, indexés comme ``datetime.weekday``.
+WEEKDAY_NAMES: Tuple[str, ...] = (
+    "lundi",
+    "mardi",
+    "mercredi",
+    "jeudi",
+    "vendredi",
+    "samedi",
+    "dimanche",
+)
+
+#: Avertissement affiché lorsque l'envoi tombe hors des créneaux autorisés.
+BUSINESS_HOURS_BLOCKED_MESSAGE = (
+    "Envoi bloqué : nous sommes en dehors des heures de prospection "
+    "optimales (Mardi-Jeudi, 8h-10h ou 13h-15h)."
+)
+
+#: Rappel des créneaux, affiché sous l'avertissement de blocage.
+BUSINESS_HOURS_SLOTS_MESSAGE = (
+    "Créneaux autorisés : mardi, mercredi et jeudi, de 8h00 à 9h59 ou de "
+    "13h00 à 14h59 (heure locale de la machine)."
+)
+
 #: Colonne du CSV maître portant le nom de l'entreprise.
 NAME_COLUMN = EMAIL_COLUMNS[0]
 
@@ -203,6 +244,48 @@ def _configure_console_encoding() -> None:
             reconfigure(errors="replace")
         except (ValueError, OSError):
             pass
+
+
+# ---------------------------------------------------------------------------
+# Créneaux de prospection
+# ---------------------------------------------------------------------------
+def is_business_hours(now: Optional[datetime] = None) -> bool:
+    """Vrai si l'instant tombe dans un créneau de prospection autorisé.
+
+    Les créneaux sont le mardi, le mercredi et le jeudi, de 8h00 à 9h59 et
+    de 13h00 à 14h59, bornes incluses. L'heure retenue est celle de la
+    machine (``datetime.now``).
+
+    Args:
+        now: Instant à tester (``None`` = maintenant).
+
+    Returns:
+        ``True`` si le jour et l'heure sont autorisés, ``False`` sinon.
+    """
+    moment = now or datetime.now()
+    if moment.weekday() not in BUSINESS_WEEKDAYS:
+        return False
+    minutes = moment.hour * 60 + moment.minute
+    return any(
+        start_h * 60 + start_m <= minutes <= end_h * 60 + end_m
+        for start_h, start_m, end_h, end_m in BUSINESS_SLOTS
+    )
+
+
+def describe_moment(now: Optional[datetime] = None) -> str:
+    """Décrit l'instant courant, par exemple « mardi 30/10/2026 à 14:05 ».
+
+    Args:
+        now: Instant à décrire (``None`` = maintenant).
+
+    Returns:
+        Le jour en français, la date et l'heure, pour affichage au démarrage.
+    """
+    moment = now or datetime.now()
+    return (
+        f"{WEEKDAY_NAMES[moment.weekday()]} "
+        f"{moment:%d/%m/%Y} à {moment:%H:%M}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -840,6 +923,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--business-hours",
+        action="store_true",
+        help=(
+            "N'envoie que du mardi au jeudi, de 8h00 à 9h59 et de 13h00 à "
+            "14h59 (heure locale) ; hors créneau, affiche un avertissement "
+            "et quitte avec le code 0 sans envoyer. Ignoré en --dry-run."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help=(
@@ -857,8 +949,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         argv: Arguments ligne de commande (``None`` = ``sys.argv[1:]``).
 
     Returns:
-        0 si tous les envois ont abouti (ou en ``--dry-run``), 1 si un envoi a
-        échoué ou si le run a été interrompu.
+        0 si tous les envois ont abouti, si le run a été bloqué par
+        ``--business-hours`` ou en ``--dry-run``, 1 si un envoi a échoué ou
+        si le run a été interrompu.
     """
     _configure_console_encoding()
     parser = build_parser()
@@ -870,6 +963,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--delay doit être supérieur ou égal à 0.")
     if args.timeout <= 0:
         parser.error("--timeout doit être supérieur à 0.")
+
+    now = datetime.now()
+    print(f"Date et heure actuelles : {describe_moment(now)}.")
+
+    if args.business_hours and not args.dry_run:
+        if not is_business_hours(now):
+            print(BUSINESS_HOURS_BLOCKED_MESSAGE, file=sys.stderr)
+            print(f"  {BUSINESS_HOURS_SLOTS_MESSAGE}", file=sys.stderr)
+            return 0
+        print("Créneau de prospection valide : envoi autorisé.")
 
     try:
         summary = send_campaign(
