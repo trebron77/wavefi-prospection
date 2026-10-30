@@ -1,0 +1,11 @@
+﻿python : Traceback (most recent call last):
+Au caractère Ligne:1 : 133
++ ... lyContinue; python -c "from config import read_csv_rows; rows=read_cs ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "<string>", line 1, in <module>
+  File "C:\Users\utilisateur\Desktop\local-dev-agent-01\prospection_wifi\config.py", line 254, in read_csv_rows
+    if not path.is_file():
+AttributeError: 'str' object has no attribute 'is_file'

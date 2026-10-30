@@ -1,0 +1,26 @@
+﻿DEEPSEEK_API_KEY : present (35 car.)
+DEEPSEEK_MODEL : present (13 car.)
+DEEPSEEK_BASE_URL : present (24 car.)
+
+leads_scores.csv : 42 ligne(s)
+   1. Boutique Hotel Kon Tiki Tahiti | H├┤tel | Papeete
+   2. H├┤tel Tahiti Nui | H├┤tel | Papeete
+   3. VA─¬ Brasserie Polyn├®sienne | Restaurant | Papeete
+   4. Fare Suisse | Chambre d'h├┤tes | Papeete
+   5. H├┤tel Sarah Nui | H├┤tel | Papeete
+   6. Le Sully | Restaurant | Papeete
+   7. Mahana Lodge Tahiti | Hostel | Papeete
+   8. Maitai Express Tahiti | H├┤tel | Papeete
+   9. Restaurant Hei | Restaurant | Papeete
+  10. L'O A La Bouche | Restaurant | Papeete
+  11. Kozy restaurant | Restaurant | Papeete
+  12. Botanica | Restaurant | Papeete
+  13. H├┤tel Reva Tahiti | H├┤tel | Papeete
+  14. La Petite Maison | Restaurant fran├ºais | Papeete
+  15. Brasserie des Remparts Tahiti | Restaurant | Papeete
+
+campagne_wifi_ultime.csv : 42 ligne(s)
+  * Boutique Hotel Kon Tiki Tahiti -> Edgecore Networks Corporation, Ruckus Wireless, AVM | WPA2
+  * H├┤tel Reva Tahiti -> Ubiquiti Inc, Hewlett Packard Enterprise | WPA2
+  * Maison 31 -> Hewlett Packard Enterprise | WPA2
+  * Kon tiki papeete -> Edgecore Networks Corporation, Ruckus Wireless, AVM | WPA2
