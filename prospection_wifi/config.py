@@ -8,9 +8,10 @@ Ce module centralise :
 * quelques utilitaires communs (journalisation, écriture CSV atomique).
 
 Il est importé par ``scraper.py``, ``scorer.py``, ``dashboard.py``,
-``emailer.py``, ``enricher.py``, ``enricher_hunter.py`` et
-``enricher_netanalyzer.py`` afin que les étapes du tunnel partagent exactement
-les mêmes noms de colonnes et les mêmes chemins de fichiers.
+``emailer.py``, ``enricher.py``, ``enricher_hunter.py``,
+``enricher_netanalyzer.py`` et ``enricher_facebook.py`` afin que les étapes du
+tunnel partagent exactement les mêmes noms de colonnes et les mêmes chemins de
+fichiers.
 
 Aucune connexion réseau n'est effectuée à l'import : le module est sûr à
 importer dans des tests hors ligne.
@@ -64,6 +65,15 @@ NETANALYZER_CSV: Path = BASE_DIR / "donnees_wifi_netanalyzer.csv"
 #: Sortie de ``enricher_netanalyzer.py`` : campagne + données Wi-Fi.
 ULTIMATE_CSV: Path = BASE_DIR / "campagne_wifi_ultime.csv"
 
+#: Sortie de ``enricher_facebook.py`` : campagne + email trouvé sur la page
+#: Facebook publique de l'établissement.
+FACEBOOK_CSV: Path = BASE_DIR / "campagne_wifi_facebook.csv"
+
+#: Sortie de ``emailer.py`` : campagne maître réunissant les textes des trois
+#: emails, l'email de contact, les données Wi-Fi et l'URL Facebook.
+MASTER_CSV: Path = BASE_DIR / "campagne_wifi_master.csv"
+
+
 
 # ---------------------------------------------------------------------------
 # Colonnes partagées entre les étapes du tunnel
@@ -114,6 +124,26 @@ ENRICHED_COLUMNS: List[str] = EMAIL_COLUMNS + ["email_contact"]
 #: Colonnes ajoutées par enricher_netanalyzer.py d'après les scans Wi-Fi :
 #: fabricant du routeur détecté et type de sécurité du réseau.
 NETWORK_COLUMNS: List[str] = ["fabricant_routeur", "securite_wifi"]
+
+#: Colonnes ajoutées par enricher_facebook.py : l'email trouvé sur la page
+#: Facebook et l'URL réellement interrogée (traçabilité de la source).
+FACEBOOK_COLUMNS: List[str] = ["email_contact", "facebook_url"]
+
+#: Colonnes du CSV maître produit par ``emailer.py`` : les textes des trois
+#: emails (étape 7), l'email de contact et l'URL Facebook (étape 8), puis les
+#: données Wi-Fi du scan (étape 6). C'est le fichier unique à utiliser pour
+#: l'envoi : une ligne = un lead complet.
+MASTER_COLUMNS: List[str] = [
+    "nom",
+    "email_1",
+    "email_2",
+    "email_3",
+    "email_contact",
+    "fabricant_routeur",
+    "securite_wifi",
+    "facebook_url",
+]
+
 
 
 # ---------------------------------------------------------------------------

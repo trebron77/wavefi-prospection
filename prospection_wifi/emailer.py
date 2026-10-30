@@ -3,23 +3,34 @@
 Le script lit ``leads_scores.csv`` (produit par ``scorer.py``), traite tous les
 leads (ou un lot limité avec ``--limit``) puis demande à l'API DeepSeek —
 compatible avec le SDK OpenAI — une séquence personnalisée de trois emails par
-lead. Le résultat est exporté dans ``campagne_wifi_polynesie.csv`` avec les
-colonnes ``nom``, ``email_1``, ``email_2`` et ``email_3``.
+lead. Les textes sont exportés dans ``campagne_wifi_polynesie.csv`` (colonnes
+``nom``, ``email_1``, ``email_2`` et ``email_3``) et la campagne complète dans
+``campagne_wifi_master.csv``.
 
 Preuve technique (données de l'étape 6)
 ---------------------------------------
 Les colonnes ``fabricant_routeur`` et ``securite_wifi`` produites par
-``enricher_netanalyzer.py`` sont relues dans ``campagne_wifi_ultime.csv`` et
-jointes aux leads par nom normalisé (accents, casse et ponctuation ignorés).
-Quand un fabricant est connu, le prompt demande une allusion discrète dans le
-premier email (« J'ai remarqué que votre établissement utilise une
-infrastructure Ruckus Wireless... ») ; quand la colonne est vide, le modèle
-reçoit l'interdiction de parler de technique.
+``enricher_netanalyzer.py`` sont relues dans ``campagne_wifi_facebook.csv``
+(source de vérité, qui hérite des scans) puis, en repli, dans
+``campagne_wifi_ultime.csv``, et jointes aux leads par nom normalisé (accents,
+casse et ponctuation ignorés). Quand un fabricant est connu, le prompt demande
+une allusion discrète dans le premier email (« J'ai remarqué que votre
+établissement utilise une infrastructure Ruckus Wireless... ») ; quand la
+colonne est vide, le modèle reçoit l'interdiction de parler de technique.
 
-Le fichier de sortie reste ``campagne_wifi_polynesie.csv`` : y écrire les
-emails effacerait ``email_contact`` et les colonnes Wi-Fi ; les étapes 4 à 6
-(``enricher.py``, ``enricher_hunter.py``, ``enricher_netanalyzer.py``) sont
-donc relancées après une régénération complète.
+Fichier maître (``campagne_wifi_master.csv``)
+---------------------------------------------
+``campagne_wifi_polynesie.csv`` ne contient que les textes : y réécrire les
+emails effacerait ``email_contact`` et les colonnes Wi-Fi. Le script produit
+donc, en plus, ``campagne_wifi_master.csv`` : les trois textes générés joints
+par nom aux coordonnées de ``campagne_wifi_facebook.csv`` (email de contact,
+fabricant du routeur, sécurité du Wi-Fi, URL Facebook). C'est ce fichier
+unique qui sert à l'envoi.
+
+L'option ``--assemble`` reconstruit le maître **sans aucun appel réseau** à
+partir des textes déjà présents dans ``campagne_wifi_polynesie.csv`` : les 42
+textes existants sont conservés à l'identique et seules les coordonnées sont
+rafraîchies depuis ``campagne_wifi_facebook.csv``.
 
 Utilisation
 -----------
@@ -28,6 +39,8 @@ Utilisation
     python emailer.py --dry-run       # aperçu des prompts, sans réseau ni écriture
     python emailer.py --no-wifi       # sans les données de scan Wi-Fi
     python emailer.py --wifi scans.csv  # autre CSV de scans Wi-Fi
+    python emailer.py --assemble      # maître reconstruit, sans DeepSeek
+    python emailer.py --assemble --contacts autre.csv --master autre_master.csv
 
 La clé ``DEEPSEEK_API_KEY`` doit être renseignée dans ``.env``. Le modèle et
 l'URL de base peuvent être surchargés avec ``DEEPSEEK_MODEL`` et
@@ -47,11 +60,24 @@ import sys
 import time
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Tuple
+from typing import (
+    Any,
+    Dict,
+    FrozenSet,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 from config import (
     CAMPAIGN_CSV,
     EMAIL_COLUMNS,
+    FACEBOOK_COLUMNS,
+    FACEBOOK_CSV,
+    MASTER_COLUMNS,
+    MASTER_CSV,
     NETWORK_COLUMNS,
     SCORES_CSV,
     ULTIMATE_CSV,
@@ -88,6 +114,13 @@ CAMPAIGN_NAME_COLUMN = "nom"
 #: Matériel relevé par le scan Wi-Fi (noms de colonnes fournis par ``config``).
 ROUTER_COLUMN = NETWORK_COLUMNS[0]
 SECURITY_COLUMN = NETWORK_COLUMNS[1]
+
+#: Email de contact relevé sur la page Facebook publique (étape 8).
+CONTACT_COLUMN = FACEBOOK_COLUMNS[0]
+
+#: Colonnes de coordonnées reprises telles quelles dans le CSV maître :
+#: email de contact et URL Facebook, puis fabricant du routeur et sécurité.
+CONTACT_COLUMNS: List[str] = FACEBOOK_COLUMNS + NETWORK_COLUMNS
 
 #: Mots génériques retirés des raisons sociales de fabricants afin de citer une
 #: marque courte dans les emails : « Edgecore » plutôt que « Edgecore Networks
@@ -416,33 +449,78 @@ def shorten_vendor(fabricant: str) -> str:
     return " ".join(words) or first
 
 
-def read_wifi_rows(path: Path = ULTIMATE_CSV) -> Dict[str, Dict[str, str]]:
-    """Indexe les données Wi-Fi de la campagne par nom normalisé.
+def _index_campaign_rows(
+    paths: Sequence[Path],
+    columns: Sequence[str],
+) -> Dict[str, Dict[str, str]]:
+    """Indexe des colonnes de campagne par nom d'entreprise normalisé.
 
-    Le fichier lu est ``campagne_wifi_ultime.csv`` (sortie de
-    ``enricher_netanalyzer.py``). Un fichier absent, une colonne manquante ou
-    une ligne sans scan sont ignorés : la génération d'emails reste possible
-    sans données techniques.
+    Les fichiers sont lus dans l'ordre fourni : la première valeur non vide
+    rencontrée pour une colonne est conservée. Cela permet de déclarer un
+    fichier de référence (``campagne_wifi_facebook.csv``) tout en gardant les
+    fichiers historiques comme repli pour les colonnes qu'il laisse vides.
 
     Args:
-        path: CSV enrichi par NetAnalyzer.
+        paths: CSV à lire, du plus prioritaire au moins prioritaire.
+        columns: Colonnes à récupérer dans ces fichiers.
+
+    Returns:
+        Un dictionnaire ``clé normalisée -> {colonne: valeur}`` limité aux
+        lignes qui portent au moins une valeur.
+    """
+    index: Dict[str, Dict[str, str]] = {}
+    for path in paths:
+        for row in read_csv_rows(Path(path)):
+            key = normalize_name_key(_text(row.get(CAMPAIGN_NAME_COLUMN)))
+            if not key:
+                continue
+            entry = index.setdefault(key, {name: "" for name in columns})
+            for column in columns:
+                value = _text(row.get(column))
+                if value and not entry[column]:
+                    entry[column] = value
+    return {key: entry for key, entry in index.items() if any(entry.values())}
+
+
+def read_wifi_rows(*paths: Path) -> Dict[str, Dict[str, str]]:
+    """Indexe le matériel Wi-Fi relevé par NetAnalyzer, par nom normalisé.
+
+    ``campagne_wifi_facebook.csv`` est lu en premier (il hérite des scans de
+    l'étape 6 et sert de source de vérité), ``campagne_wifi_ultime.csv``
+    venant en repli. Un fichier absent, une colonne manquante ou une ligne
+    sans scan sont ignorés : la génération d'emails reste possible sans
+    données techniques.
+
+    Args:
+        *paths: CSV à interroger, du plus prioritaire au moins prioritaire.
+            Par défaut ``campagne_wifi_ultime.csv``.
 
     Returns:
         Un dictionnaire ``clé normalisée -> {fabricant_routeur,
         securite_wifi}`` limité aux lignes qui portent au moins une
         information Wi-Fi.
     """
-    index: Dict[str, Dict[str, str]] = {}
-    for row in read_csv_rows(Path(path)):
-        key = normalize_name_key(_text(row.get(CAMPAIGN_NAME_COLUMN)))
-        router = _text(row.get(ROUTER_COLUMN))
-        security = _text(row.get(SECURITY_COLUMN))
-        if not key or (not router and not security):
-            continue
-        index.setdefault(
-            key, {ROUTER_COLUMN: router, SECURITY_COLUMN: security}
-        )
-    return index
+    return _index_campaign_rows(list(paths) or [ULTIMATE_CSV], NETWORK_COLUMNS)
+
+
+def read_contact_rows(*paths: Path) -> Dict[str, Dict[str, str]]:
+    """Indexe les coordonnées de campagne par nom normalisé.
+
+    L'email de contact, l'URL Facebook et les données Wi-Fi sont lus en
+    priorité dans ``campagne_wifi_facebook.csv`` (sortie de l'étape 8, source
+    de vérité des emails de contact) ; les fichiers suivants ne complètent que
+    les valeurs laissées vides.
+
+    Args:
+        *paths: CSV à interroger, du plus prioritaire au moins prioritaire.
+            Par défaut ``campagne_wifi_facebook.csv``.
+
+    Returns:
+        Un dictionnaire ``clé normalisée -> {email_contact, facebook_url,
+        fabricant_routeur, securite_wifi}`` limité aux noms qui portent au
+        moins une valeur.
+    """
+    return _index_campaign_rows(list(paths) or [FACEBOOK_CSV], CONTACT_COLUMNS)
 
 
 def attach_wifi_data(
@@ -802,6 +880,141 @@ def _generate_sequence(
     )
 
 
+def build_master_rows(
+    text_rows: Sequence[Mapping[str, str]],
+    contacts: Mapping[str, Mapping[str, str]],
+) -> List[Dict[str, str]]:
+    """Joint les textes d'emails générés et les coordonnées de campagne.
+
+    La jointure se fait par nom normalisé, comme dans les autres étapes du
+    tunnel. Les textes ne sont jamais réécrits : ils sont recopiés tels quels
+    depuis ``campagne_wifi_polynesie.csv``.
+
+    Args:
+        text_rows: Lignes de la campagne (``nom``, ``email_1`` à ``email_3``).
+        contacts: Index produit par :func:`read_contact_rows`.
+
+    Returns:
+        Une ligne par entrée de ``text_rows``, dans l'ordre de
+        :data:`config.MASTER_COLUMNS`. Les coordonnées absentes restent vides.
+    """
+    master: List[Dict[str, str]] = []
+    for text_row in text_rows:
+        name = _text(text_row.get(CAMPAIGN_NAME_COLUMN))
+        info = contacts.get(normalize_name_key(name), {})
+        row: Dict[str, str] = {}
+        for column in MASTER_COLUMNS:
+            if column == CAMPAIGN_NAME_COLUMN:
+                row[column] = name
+            elif column in CONTACT_COLUMNS:
+                row[column] = _text(info.get(column))
+            else:
+                row[column] = _text(text_row.get(column))
+        master.append(row)
+    return master
+
+
+def assemble_master_campaign(
+    *,
+    texts_path: Path = CAMPAIGN_CSV,
+    contacts_path: Path = FACEBOOK_CSV,
+    output_path: Path = MASTER_CSV,
+    fallback_paths: Sequence[Path] = (ULTIMATE_CSV,),
+    protected_paths: Sequence[Path] = (),
+    rows: Optional[Sequence[Mapping[str, str]]] = None,
+) -> List[Dict[str, str]]:
+    """Écrit le CSV maître : textes des emails, email de contact et Wi-Fi.
+
+    Args:
+        texts_path: CSV des textes d'emails réutilisés
+            (``campagne_wifi_polynesie.csv``) ; ignoré si ``rows`` est fourni.
+        contacts_path: CSV des coordonnées, source de vérité
+            (``campagne_wifi_facebook.csv``).
+        output_path: CSV maître à écrire (``campagne_wifi_master.csv``).
+        fallback_paths: CSV complémentaires lus après ``contacts_path`` pour
+            les colonnes que celui-ci laisse vides
+            (``campagne_wifi_ultime.csv``).
+        protected_paths: Fichiers que le maître ne doit jamais écraser
+            (par exemple le CSV de campagne d'une génération en cours).
+        rows: Textes déjà en mémoire, par exemple juste après une génération
+            complète : le CSV de campagne n'est alors pas relu.
+
+    Returns:
+        Les lignes écrites.
+
+    Raises:
+        RuntimeError: Si aucun texte d'email n'est disponible.
+        ValueError: Si ``output_path`` désigne un fichier source à préserver.
+        OSError: Si l'écriture du CSV maître échoue.
+    """
+    logger = setup_logging()
+    if rows is not None:
+        text_rows = list(rows)
+    else:
+        text_rows = read_csv_rows(Path(texts_path))
+    if not text_rows:
+        raise RuntimeError(
+            f"Aucun texte d'email dans {texts_path}. Lancez d'abord "
+            "« python emailer.py » pour générer la campagne."
+        )
+
+    output = Path(output_path)
+    guarded = [Path(texts_path), Path(contacts_path)]
+    guarded.extend(Path(path) for path in fallback_paths)
+    guarded.extend(Path(path) for path in protected_paths)
+    for path in guarded:
+        if path.resolve() == output.resolve():
+            raise ValueError(
+                f"Le CSV maître ne peut pas écraser {path.name} : indiquez un "
+                "autre chemin avec --master."
+            )
+
+    sources: List[Path] = [Path(contacts_path)]
+    sources.extend(Path(path) for path in fallback_paths)
+    contacts = read_contact_rows(*sources)
+    if not contacts:
+        logger.warning(
+            "Aucune coordonnée lisible dans %s : le CSV maître sera écrit "
+            "sans email de contact.",
+            contacts_path,
+        )
+
+    master = build_master_rows(text_rows, contacts)
+    written = write_csv_atomic(output, master, MASTER_COLUMNS)
+
+    with_contact = sum(1 for row in master if _text(row.get(CONTACT_COLUMN)))
+    with_wifi = sum(
+        1
+        for row in master
+        if _text(row.get(ROUTER_COLUMN)) or _text(row.get(SECURITY_COLUMN))
+    )
+    logger.info(
+        "Campagne maître : %d ligne(s), %d email(s) de contact, %d ligne(s) "
+        "avec scan Wi-Fi, écrite dans %s",
+        written,
+        with_contact,
+        with_wifi,
+        output_path,
+    )
+
+    text_keys = {
+        normalize_name_key(_text(row.get(CAMPAIGN_NAME_COLUMN)))
+        for row in text_rows
+    }
+    orphans = sorted(key for key in contacts if key not in text_keys)
+    if orphans:
+        logger.warning(
+            "%d nom(s) de %s n'ont pas de texte d'email et sont donc absents "
+            "du maître (ex. %s) : relancez « python emailer.py » pour les "
+            "générer.",
+            len(orphans),
+            contacts_path,
+            ", ".join(orphans[:5]),
+        )
+    return master
+
+
+
 def generate_campaign(
     limit: Optional[int] = None,
     *,
@@ -809,6 +1022,8 @@ def generate_campaign(
     input_path: Path = SCORES_CSV,
     output_path: Path = CAMPAIGN_CSV,
     wifi_path: Path = ULTIMATE_CSV,
+    contacts_path: Path = FACEBOOK_CSV,
+    master_path: Path = MASTER_CSV,
     use_wifi: bool = True,
     client: Optional[Any] = None,
 ) -> List[Dict[str, str]]:
@@ -818,10 +1033,13 @@ def generate_campaign(
         limit: Nombre maximal de leads à traiter (``None`` = tous).
         dry_run: Si vrai, journalise les prompts sans appel réseau ni écriture.
         input_path: CSV de scores produit par ``scorer.py``.
-        output_path: CSV de campagne à écrire.
+        output_path: CSV de campagne à écrire (les textes seuls).
         wifi_path: CSV enrichi par ``enricher_netanalyzer.py`` ; ses colonnes
             ``fabricant_routeur`` et ``securite_wifi`` nourrissent la preuve
             technique du premier email.
+        contacts_path: CSV des coordonnées (``campagne_wifi_facebook.csv``),
+            source de vérité de l'email de contact et des données Wi-Fi.
+        master_path: CSV maître écrit à la fin (textes + coordonnées).
         use_wifi: Si faux, aucune donnée Wi-Fi n'est relue ni mentionnée.
         client: Client compatible OpenAI injectable (tests hors ligne). S'il
             est fourni, aucune clé DeepSeek n'est lue.
@@ -833,7 +1051,7 @@ def generate_campaign(
         RuntimeError: Si le CSV est vide, si la clé manque ou si DeepSeek
             échoue.
         ValueError: Si ``limit`` est inférieur à 1.
-        OSError: Si l'écriture du CSV échoue.
+        OSError: Si l'écriture d'un CSV échoue.
     """
     logger = setup_logging()
     load_env()
@@ -858,18 +1076,22 @@ def generate_campaign(
 
     wifi_index: Dict[str, Dict[str, str]] = {}
     if use_wifi:
-        wifi_index = read_wifi_rows(wifi_path)
+        # Le CSV de l'étape 8 est prioritaire (source de vérité, il hérite des
+        # scans) ; le CSV de l'étape 6 ne complète que les valeurs vides.
+        wifi_index = read_wifi_rows(Path(contacts_path), Path(wifi_path))
         if wifi_index:
             logger.info(
-                "%d fiche(s) de scan Wi-Fi relue(s) dans %s",
+                "%d fiche(s) de scan Wi-Fi relue(s) dans %s et %s",
                 len(wifi_index),
+                Path(contacts_path).name,
                 Path(wifi_path).name,
             )
         else:
             logger.warning(
-                "Aucune donnée Wi-Fi exploitable dans %s : les emails ne "
-                "parleront pas de technique. Lancez d'abord "
+                "Aucune donnée Wi-Fi exploitable dans %s ni dans %s : les "
+                "emails ne parleront pas de technique. Lancez d'abord "
                 "« python enricher_netanalyzer.py ».",
+                contacts_path,
                 wifi_path,
             )
 
@@ -941,6 +1163,13 @@ def generate_campaign(
         written * 3,
         output_path,
     )
+    assemble_master_campaign(
+        contacts_path=contacts_path,
+        output_path=master_path,
+        fallback_paths=(Path(wifi_path),) if use_wifi else (),
+        protected_paths=(Path(output_path),),
+        rows=rows,
+    )
     return rows
 
 
@@ -974,9 +1203,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     _configure_console_encoding()
     parser = argparse.ArgumentParser(
         description=(
-            "Génère trois emails de prospection par lead avec DeepSeek, à "
-            "partir des scores et des scans Wi-Fi, et écrit "
-            "campagne_wifi_polynesie.csv."
+            "Génère trois emails de prospection par lead avec DeepSeek à "
+            "partir des scores et des scans Wi-Fi, puis écrit "
+            "campagne_wifi_polynesie.csv (textes) et campagne_wifi_master.csv "
+            "(textes + email de contact + données Wi-Fi)."
         )
     )
     parser.add_argument(
@@ -1002,8 +1232,40 @@ def main(argv: Optional[List[str]] = None) -> int:
         type=Path,
         default=ULTIMATE_CSV,
         help=(
-            "CSV enrichi par enricher_netanalyzer.py "
-            "(défaut : campagne_wifi_ultime.csv)."
+            "CSV enrichi par enricher_netanalyzer.py, utilisé en repli des "
+            "données Wi-Fi (défaut : campagne_wifi_ultime.csv)."
+        ),
+    )
+    parser.add_argument(
+        "--contacts",
+        type=Path,
+        default=FACEBOOK_CSV,
+        help=(
+            "CSV des coordonnées, source de vérité de l'email de contact et "
+            "des données Wi-Fi (défaut : campagne_wifi_facebook.csv)."
+        ),
+    )
+    parser.add_argument(
+        "--master",
+        type=Path,
+        default=MASTER_CSV,
+        help="CSV maître à écrire (défaut : campagne_wifi_master.csv).",
+    )
+    parser.add_argument(
+        "--texts",
+        type=Path,
+        default=CAMPAIGN_CSV,
+        help=(
+            "CSV de textes réutilisé par --assemble "
+            "(défaut : campagne_wifi_polynesie.csv)."
+        ),
+    )
+    parser.add_argument(
+        "--assemble",
+        action="store_true",
+        help=(
+            "Ne génère aucun email : reconstruit le CSV maître à partir des "
+            "textes existants et des coordonnées, sans appel réseau."
         ),
     )
     parser.add_argument(
@@ -1021,6 +1283,27 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.limit is not None and args.limit < 1:
         parser.error("--limit doit être un entier supérieur ou égal à 1.")
 
+    if args.assemble:
+        if args.dry_run:
+            parser.error("--assemble et --dry-run sont incompatibles.")
+        try:
+            master = assemble_master_campaign(
+                texts_path=args.texts,
+                contacts_path=args.contacts,
+                output_path=args.master,
+                fallback_paths=() if args.no_wifi else (args.wifi,),
+            )
+        except (RuntimeError, OSError, ValueError) as exc:
+            print(f"Erreur : {exc}", file=sys.stderr)
+            return 1
+
+        with_contact = sum(1 for row in master if row.get(CONTACT_COLUMN))
+        print(
+            f"{len(master)} lead(s), dont {with_contact} avec un email de "
+            f"contact, dans {args.master}"
+        )
+        return 0
+
     try:
         rows = generate_campaign(
             args.limit,
@@ -1028,6 +1311,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             input_path=args.input,
             output_path=args.output,
             wifi_path=args.wifi,
+            contacts_path=args.contacts,
+            master_path=args.master,
             use_wifi=not args.no_wifi,
         )
     except (RuntimeError, OSError, ValueError) as exc:
@@ -1040,6 +1325,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"{len(rows)} lead(s) et {len(rows) * 3} email(s) dans {args.output} :")
     for row in rows:
         print(f"  - {row.get('nom') or 'n/a'}")
+    print(f"Campagne maître (textes + contacts + Wi-Fi) : {args.master}")
     return 0
 
 
