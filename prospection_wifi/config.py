@@ -9,9 +9,9 @@ Ce module centralise :
 
 Il est importé par ``scraper.py``, ``scorer.py``, ``dashboard.py``,
 ``emailer.py``, ``enricher.py``, ``enricher_hunter.py``,
-``enricher_netanalyzer.py`` et ``enricher_facebook.py`` afin que les étapes du
-tunnel partagent exactement les mêmes noms de colonnes et les mêmes chemins de
-fichiers.
+``enricher_netanalyzer.py``, ``enricher_facebook.py`` et ``sender.py`` afin que
+les étapes du tunnel partagent exactement les mêmes noms de colonnes et les
+mêmes chemins de fichiers.
 
 Aucune connexion réseau n'est effectuée à l'import : le module est sûr à
 importer dans des tests hors ligne.
