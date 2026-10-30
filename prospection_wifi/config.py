@@ -7,9 +7,9 @@ Ce module centralise :
 * les constantes de chemins de fichiers (CSV, dashboard HTML) ;
 * quelques utilitaires communs (journalisation, écriture CSV atomique).
 
-Il est importé par ``scraper.py``, ``scorer.py``, ``dashboard.py`` et
-``emailer.py`` afin que les étapes du tunnel partagent exactement les mêmes
-noms de colonnes et les mêmes chemins de fichiers.
+Il est importé par ``scraper.py``, ``scorer.py``, ``dashboard.py``,
+``emailer.py`` et ``enricher.py`` afin que les étapes du tunnel partagent
+exactement les mêmes noms de colonnes et les mêmes chemins de fichiers.
 
 Aucune connexion réseau n'est effectuée à l'import : le module est sûr à
 importer dans des tests hors ligne.
@@ -50,6 +50,12 @@ DASHBOARD_HTML: Path = BASE_DIR / "leads_scores.html"
 
 #: Sortie de ``emailer.py`` : séquence de 3 emails par lead.
 CAMPAIGN_CSV: Path = BASE_DIR / "campagne_wifi_polynesie.csv"
+
+#: Sortie de ``enricher.py`` : campagne + adresse email de contact du site.
+ENRICHED_CSV: Path = BASE_DIR / "campagne_wifi_enrichie.csv"
+
+#: Sortie de ``enricher_hunter.py`` : campagne + email trouvé via Hunter.io.
+FINAL_CSV: Path = BASE_DIR / "campagne_wifi_final.csv"
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +100,9 @@ EMAIL_COLUMNS: List[str] = [
     "email_2",
     "email_3",
 ]
+
+#: Colonnes produites par enricher.py : la campagne + l'email du site.
+ENRICHED_COLUMNS: List[str] = EMAIL_COLUMNS + ["email_contact"]
 
 
 # ---------------------------------------------------------------------------

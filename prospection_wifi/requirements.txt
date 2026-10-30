@@ -5,7 +5,8 @@
 # Installation : python -m pip install -r requirements.txt
 #
 # pandas        : génération du tableau de bord HTML (dashboard.py)
-# requests      : appels HTTP aux API Apify et TypeSafe (Jeff)
+# requests      : appels HTTP aux API Apify, TypeSafe (Jeff) et sites web
+# beautifulsoup4: analyse HTML des sites pour trouver les emails de contact
 # python-dotenv : lecture des clés d'API depuis le fichier .env
 # openai        : client compatible OpenAI, utilisé pour l'API DeepSeek
 #                 (base_url = https://api.deepseek.com)
@@ -14,5 +15,6 @@
 # ce fichier est autonome et ne remplace pas le requirements.txt racine.
 pandas>=2.0.0
 requests>=2.31.0
+beautifulsoup4>=4.12.0
 python-dotenv>=1.0.1
 openai>=1.40.0

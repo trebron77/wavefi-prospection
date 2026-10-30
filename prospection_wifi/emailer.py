@@ -1,20 +1,24 @@
 """Rédige une séquence de trois emails de prospection avec DeepSeek.
 
-Le script lit ``leads_scores.csv`` (produit par ``scorer.py``), sélectionne les
-premiers leads puis demande à l'API DeepSeek — compatible avec le SDK OpenAI —
-une séquence personnalisée de trois emails par lead. Le résultat est exporté
-dans ``campagne_wifi_polynesie.csv`` avec les colonnes ``nom``, ``email_1``,
-``email_2`` et ``email_3``.
+Le script lit ``leads_scores.csv`` (produit par ``scorer.py``), traite tous les
+leads (ou un lot limité avec ``--limit``) puis demande à l'API DeepSeek —
+compatible avec le SDK OpenAI — une séquence personnalisée de trois emails par
+lead. Le résultat est exporté dans ``campagne_wifi_polynesie.csv`` avec les
+colonnes ``nom``, ``email_1``, ``email_2`` et ``email_3``.
 
 Utilisation
 -----------
-    python emailer.py                 # 3 premiers leads, appel réel
+    python emailer.py                 # tous les leads, appel réel
     python emailer.py --limit 5       # 5 premiers leads
     python emailer.py --dry-run       # aperçu des prompts, sans réseau ni écriture
 
 La clé ``DEEPSEEK_API_KEY`` doit être renseignée dans ``.env``. Le modèle et
 l'URL de base peuvent être surchargés avec ``DEEPSEEK_MODEL`` et
 ``DEEPSEEK_BASE_URL``.
+
+Après génération, les placeholders de signature sont remplacés par les
+coordonnées WaveFi (Norbert, WaveFi, +689 87 07 70 19) et les lignes
+``contact@wavefi.tech`` / ``www.wavefi.tech`` sont ajoutées à la fin.
 """
 
 from __future__ import annotations
@@ -46,9 +50,6 @@ DEFAULT_MODEL = "deepseek-chat"
 
 #: URL de base de l'API DeepSeek (compatible OpenAI).
 DEFAULT_BASE_URL = "https://api.deepseek.com"
-
-#: Nombre de leads traités par défaut.
-DEFAULT_LIMIT = 3
 
 #: Délai maximal d'un appel à DeepSeek (secondes).
 REQUEST_TIMEOUT_SECONDS = 90
@@ -100,10 +101,12 @@ la justification interne dans le texte de l'email.
 - Chaque email doit être court (environ 90 à 150 mots), avec un seul appel à \
 l'action clair.
 - L'objet doit faire moins de 70 caractères et ne pas être racoleur.
-- Terminez chaque email par une signature générique sur trois lignes :
+- Terminez chaque email par une signature sur cinq lignes :
   [Votre prénom]
   [Votre entreprise]
   [Votre téléphone]
+  contact@wavefi.tech
+  www.wavefi.tech
 - N'utilisez ni markdown, ni listes à puces, ni emoji.
 
 Réponds uniquement avec un objet JSON valide, sans texte avant ou après et sans \
@@ -127,6 +130,19 @@ def _text(value: Any) -> str:
 
 #: Formule d'ouverture imposée à chaque email.
 GREETING = "Ia ora na,"
+
+#: Coordonnées substituées aux placeholders de la signature générée.
+SENDER_REPLACEMENTS: Dict[str, str] = {
+    "[Votre prénom]": "Norbert",
+    "[Votre entreprise]": "WaveFi",
+    "[Votre téléphone]": "+689 87 07 70 19",
+}
+
+#: Lignes ajoutées à la fin de la signature (sans doublon).
+SENDER_CONTACT_LINES: Tuple[str, ...] = (
+    "contact@wavefi.tech",
+    "www.wavefi.tech",
+)
 
 _GREETING_PREFIX = re.compile(
     r"^\s*(?:ia\s+ora\s+na|bonjour|bonsoir|salut|hello)"
@@ -163,6 +179,50 @@ def ensure_polynesian_greeting(body: str) -> str:
     text = text.lstrip()
 
     return f"{GREETING}\n\n{text}" if text else GREETING
+
+
+def replace_sender_placeholders(text: str) -> str:
+    """Remplace les placeholders de signature par les coordonnées WaveFi.
+
+    Args:
+        text: Objet ou corps brut renvoyé par DeepSeek.
+
+    Returns:
+        Le texte avec ``[Votre prénom]``, ``[Votre entreprise]`` et
+        ``[Votre téléphone]`` remplacés. Les autres caractères sont conservés.
+    """
+    result = text or ""
+    for placeholder, replacement in SENDER_REPLACEMENTS.items():
+        result = result.replace(placeholder, replacement)
+    return result
+
+
+def ensure_contact_signature(body: str) -> str:
+    """Ajoute l'e-mail et le site WaveFi à la fin de la signature.
+
+    La fonction est idempotente : si une ligne de contact est déjà présente
+    (par exemple parce que le modèle l'a écrite spontanément), elle n'est pas
+    dupliquée.
+
+    Args:
+        body: Corps de l'email après remplacement des placeholders.
+
+    Returns:
+        Le corps nettoyé, terminé par ``contact@wavefi.tech`` puis
+        ``www.wavefi.tech``.
+    """
+    text = (body or "").rstrip()
+    if not text:
+        return text
+
+    missing = [
+        line
+        for line in SENDER_CONTACT_LINES
+        if line.casefold() not in text.casefold()
+    ]
+    if missing:
+        text = f"{text}\n" + "\n".join(missing)
+    return text
 
 
 def _normalize_for_match(value: str) -> str:
@@ -387,7 +447,10 @@ def parse_emails(content: str) -> List[Dict[str, str]]:
             raise EmailGenerationError(f"L'email {index} n'a pas d'objet.")
         if not body:
             raise EmailGenerationError(f"L'email {index} n'a pas de corps.")
+        subject = replace_sender_placeholders(subject)
+        body = replace_sender_placeholders(body)
         body = ensure_polynesian_greeting(body)
+        body = ensure_contact_signature(body)
         emails.append({"objet": subject, "corps": body})
     return emails
 
@@ -534,17 +597,17 @@ def _generate_sequence(
 
 
 def generate_campaign(
-    limit: int = DEFAULT_LIMIT,
+    limit: Optional[int] = None,
     *,
     dry_run: bool = False,
     input_path: Path = SCORES_CSV,
     output_path: Path = CAMPAIGN_CSV,
     client: Optional[Any] = None,
 ) -> List[Dict[str, str]]:
-    """Génère et exporte la séquence d'emails des premiers leads.
+    """Génère et exporte la séquence d'emails des leads sélectionnés.
 
     Args:
-        limit: Nombre de leads à traiter (3 par défaut).
+        limit: Nombre maximal de leads à traiter (``None`` = tous).
         dry_run: Si vrai, journalise les prompts sans appel réseau ni écriture.
         input_path: CSV de scores produit par ``scorer.py``.
         output_path: CSV de campagne à écrire.
@@ -563,7 +626,7 @@ def generate_campaign(
     logger = setup_logging()
     load_env()
 
-    if limit < 1:
+    if limit is not None and limit < 1:
         raise ValueError("limit doit être supérieur ou égal à 1.")
 
     leads = read_csv_rows(Path(input_path))
@@ -573,8 +636,8 @@ def generate_campaign(
             "Lancez d'abord « python scorer.py » pour produire les scores."
         )
 
-    selected = leads[:limit]
-    if len(selected) < limit:
+    selected = leads if limit is None else leads[:limit]
+    if limit is not None and len(selected) < limit:
         logger.warning(
             "Seulement %d lead(s) disponible(s) sur les %d demandés.",
             len(selected),
@@ -643,6 +706,24 @@ def generate_campaign(
     return rows
 
 
+def _configure_console_encoding() -> None:
+    """Évite les erreurs d'encodage des consoles Windows héritées.
+
+    Certains noms polynésiens contiennent des caractères absents de cp1252
+    (par exemple ``Ī``). Le CSV reste écrit en UTF-8 ; on demande simplement à
+    la console de remplacer les caractères qu'elle ne sait pas afficher au lieu
+    d'interrompre le script.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """Point d'entrée CLI de ``emailer.py``.
 
@@ -652,6 +733,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     Returns:
         0 si les emails ont été générés (ou simulés), 1 sinon.
     """
+    _configure_console_encoding()
     parser = argparse.ArgumentParser(
         description=(
             "Génère trois emails de prospection par lead avec DeepSeek et "
@@ -661,8 +743,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--limit",
         type=int,
-        default=DEFAULT_LIMIT,
-        help="Nombre de leads à traiter (défaut : 3).",
+        default=None,
+        help="Nombre de leads à traiter (défaut : tous).",
     )
     parser.add_argument(
         "--input",
@@ -683,7 +765,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.limit < 1:
+    if args.limit is not None and args.limit < 1:
         parser.error("--limit doit être un entier supérieur ou égal à 1.")
 
     try:
