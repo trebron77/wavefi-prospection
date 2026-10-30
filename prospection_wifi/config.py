@@ -8,8 +8,9 @@ Ce module centralise :
 * quelques utilitaires communs (journalisation, écriture CSV atomique).
 
 Il est importé par ``scraper.py``, ``scorer.py``, ``dashboard.py``,
-``emailer.py`` et ``enricher.py`` afin que les étapes du tunnel partagent
-exactement les mêmes noms de colonnes et les mêmes chemins de fichiers.
+``emailer.py``, ``enricher.py``, ``enricher_hunter.py`` et
+``enricher_netanalyzer.py`` afin que les étapes du tunnel partagent exactement
+les mêmes noms de colonnes et les mêmes chemins de fichiers.
 
 Aucune connexion réseau n'est effectuée à l'import : le module est sûr à
 importer dans des tests hors ligne.
@@ -57,6 +58,12 @@ ENRICHED_CSV: Path = BASE_DIR / "campagne_wifi_enrichie.csv"
 #: Sortie de ``enricher_hunter.py`` : campagne + email trouvé via Hunter.io.
 FINAL_CSV: Path = BASE_DIR / "campagne_wifi_final.csv"
 
+#: Entrée de ``enricher_netanalyzer.py`` : scans Wi-Fi relevés par NetAnalyzer.
+NETANALYZER_CSV: Path = BASE_DIR / "donnees_wifi_netanalyzer.csv"
+
+#: Sortie de ``enricher_netanalyzer.py`` : campagne + données Wi-Fi.
+ULTIMATE_CSV: Path = BASE_DIR / "campagne_wifi_ultime.csv"
+
 
 # ---------------------------------------------------------------------------
 # Colonnes partagées entre les étapes du tunnel
@@ -103,6 +110,10 @@ EMAIL_COLUMNS: List[str] = [
 
 #: Colonnes produites par enricher.py : la campagne + l'email du site.
 ENRICHED_COLUMNS: List[str] = EMAIL_COLUMNS + ["email_contact"]
+
+#: Colonnes ajoutées par enricher_netanalyzer.py d'après les scans Wi-Fi :
+#: fabricant du routeur détecté et type de sécurité du réseau.
+NETWORK_COLUMNS: List[str] = ["fabricant_routeur", "securite_wifi"]
 
 
 # ---------------------------------------------------------------------------
