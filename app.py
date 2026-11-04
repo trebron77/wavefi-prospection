@@ -1,6 +1,105 @@
-import streamlit as st
+"""Interface Streamlit de l'agent autonome local.
+
+L'interface ne fait pas tourner la boucle agentique dans le processus du serveur :
+elle lance `src/agent.py` dans un sous-processus. Deux précautions en découlent :
+
+- `python_executable()` choisit l'interpréteur de l'environnement virtuel ;
+- `injecter_secrets()` recopie les secrets Streamlit dans l'environnement hérité.
+"""
+
+import os
 import subprocess
 import sys
+from typing import List
+
+import streamlit as st
+
+# Correspondances de noms de secrets acceptées : la famille `DEEPSEEK_*` (celle
+# de `prospection_wifi/`) est traduite vers les noms lus par `src/config.py`.
+# Les noms `LLM_*` restent prioritaires, et rien n'est écrasé.
+ALIAS_SECRETS = {
+    "DEEPSEEK_API_KEY": "LLM_API_KEY",
+    "DEEPSEEK_BASE_URL": "LLM_BASE_URL",
+    "DEEPSEEK_MODEL": "LLM_MODEL",
+}
+
+
+def python_executable() -> str:
+    """Interpréteur Python à utiliser pour lancer l'agent en sous-processus.
+
+    Sur Streamlit Cloud, `app.py` est démarré par le Python système
+    (`/usr/local/bin/python`), qui ne connaît pas les dépendances du projet
+    (`openai`, `python-dotenv`...) : `sys.executable` y désigne le mauvais
+    interpréteur. La variable `VIRTUAL_ENV` pointe vers l'environnement virtuel
+    actif (`/home/adminuser/venv` sur Streamlit Cloud) ; son Python est donc
+    prioritaire, avec `sys.executable` en repli.
+
+    Returns:
+        Chemin de l'interpréteur de l'environnement virtuel s'il existe, sinon
+        `sys.executable`.
+    """
+    virtual_env = os.environ.get("VIRTUAL_ENV")
+    if virtual_env:
+        if os.name == "nt":  # Windows : <venv>\Scripts\python.exe
+            candidat = os.path.join(virtual_env, "Scripts", "python.exe")
+        else:  # Linux / macOS : <venv>/bin/python
+            candidat = os.path.join(virtual_env, "bin", "python")
+        if os.path.isfile(candidat):
+            return candidat
+    return sys.executable
+
+
+def injecter_secrets() -> List[str]:
+    """Recopie les *secrets* Streamlit dans ``os.environ`` pour le sous-processus.
+
+    Les secrets d'une application déployée ne vivent pas dans les variables
+    d'environnement du serveur mais dans ``st.secrets`` (tableau de bord
+    Streamlit Cloud, ou ``.streamlit/secrets.toml`` en local). Or l'agent lit
+    ``os.environ`` (voir ``src/config.py``) et le sous-processus n'hérite que de
+    cet environnement : les clés doivent donc y être recopiées avant le
+    lancement.
+
+    Sans ``secrets.toml``, ``st.secrets`` est vide et sa lecture lève
+    ``FileNotFoundError`` : la fonction ne fait alors rien (lancement local
+    inchangé). Les variables déjà présentes dans l'environnement ne sont pas
+    écrasées, et les sections TOML (valeurs imbriquées) sont ignorées, faute de
+    pouvoir représenter un tableau dans une variable d'environnement.
+
+    Un secret ``DEEPSEEK_API_KEY`` (nom utilisé par ``prospection_wifi/``)
+    alimente aussi ``LLM_API_KEY``, le nom lu par ``src/config.py`` : voir
+    :data:`ALIAS_SECRETS`. La clé ``DEEPSEEK_API_KEY`` elle-même reste dans
+    l'environnement, donc les deux conventions cohabitent.
+
+    Returns:
+        Liste des variables effectivement ajoutées (vide si l'environnement
+        contenait déjà tout, ou si ``st.secrets`` est vide). Les valeurs ne sont
+        jamais affichées.
+    """
+    try:
+        secrets = dict(st.secrets)
+    except FileNotFoundError:  # aucun secrets.toml : rien à injecter
+        return []
+
+    injectees: List[str] = []
+    for cle, valeur in secrets.items():
+        if not isinstance(valeur, (str, int, float)):
+            continue  # section TOML ([section]) : pas une variable d'environnement
+        if cle not in os.environ:
+            os.environ[cle] = str(valeur)
+            injectees.append(cle)
+
+    # Correspondances de noms : `DEEPSEEK_API_KEY` alimente `LLM_API_KEY` si
+    # celle-ci n'est pas déjà connue (ni par l'environnement, ni par un secret).
+    for source, cible in ALIAS_SECRETS.items():
+        if cible in os.environ:
+            continue
+        valeur = secrets.get(source)
+        if isinstance(valeur, (str, int, float)) and str(valeur).strip():
+            os.environ[cible] = str(valeur)
+            injectees.append(cible)
+
+    return injectees
+
 
 st.set_page_config(page_title="Mon Agent Autonome", page_icon="🤖")
 st.title("🤖 Mon Agent Autonome")
@@ -21,19 +120,25 @@ if prompt := st.chat_input("Que dois-je faire ?"):
     with st.chat_message("assistant"):
         with st.spinner("L'agent réfléchit..."):
             cmd = [
-                sys.executable, "src/agent.py", 
+                python_executable(), "src/agent.py", 
                 "-p", prompt, 
                 "--model", "deepseek-chat",
                 "--yes" 
             ]
             
-            # Exécution avec gestion des erreurs d'encodage
+            # Les secrets Streamlit (clé API, endpoint...) doivent figurer dans
+            # l'environnement hérité par le sous-processus.
+            injecter_secrets()
+
+            # Exécution avec gestion des erreurs d'encodage ; le sous-processus
+            # hérite de l'environnement du serveur (secrets, VIRTUAL_ENV...).
             result = subprocess.run(
                 cmd, 
                 capture_output=True, 
                 text=True, 
                 encoding="utf-8",
-                errors="replace"
+                errors="replace",
+                env=os.environ.copy()
             )
             
             if result.returncode == 0:
