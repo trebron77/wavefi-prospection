@@ -8,6 +8,7 @@ elle lance `src/agent.py` dans un sous-processus. Deux précautions en découlen
 """
 
 import os
+import shutil
 import subprocess
 import sys
 from typing import List
@@ -104,6 +105,20 @@ def injecter_secrets() -> List[str]:
 
 
 st.set_page_config(page_title="Mon Agent Autonome", page_icon="🤖")
+
+# ---------------------------------------------------------------------------
+# Diagnostic temporaire (à supprimer une fois le déploiement réparé) : il montre
+# quel interpréteur et quel préfixe Python le serveur expose réellement.
+# `st.set_page_config` doit rester la première commande Streamlit ; ce bloc se
+# place donc juste après, et s'affiche tout de même en haut de la page.
+# ---------------------------------------------------------------------------
+st.subheader("🔍 Diagnostic Python")
+st.write(f"Python: {sys.executable}")
+st.write(f"Prefix: {sys.prefix}")
+st.write(f"Streamlit: {shutil.which('streamlit')}")
+st.write(f"Python (which): {shutil.which('python')}")
+st.write(f"Path: {sys.path[:5]}")
+
 st.title("🤖 Mon Agent Autonome")
 st.caption("Interface graphique propulsée par Streamlit et DeepSeek.")
 
