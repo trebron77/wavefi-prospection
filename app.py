@@ -3,7 +3,7 @@
 L'interface ne fait pas tourner la boucle agentique dans le processus du serveur :
 elle lance `src/agent.py` dans un sous-processus. Deux précautions en découlent :
 
-- `python_executable()` réutilise l'interpréteur qui exécute déjà `app.py` ;
+- `python_executable()` vise l'interpréteur du venv décrit par `sys.prefix` ;
 - `injecter_secrets()` recopie les secrets Streamlit dans l'environnement hérité.
 """
 
@@ -27,16 +27,27 @@ ALIAS_SECRETS = {
 def python_executable() -> str:
     """Interpréteur Python à utiliser pour lancer l'agent en sous-processus.
 
-    C'est le Python qui exécute déjà `app.py` : sur Streamlit Cloud, il s'agit de
-    celui de l'environnement virtuel du déploiement (`/home/adminuser/venv`), le
-    seul à connaître les dépendances du projet (`openai`, `python-dotenv`...).
-    S'en remettre à `sys.executable` évite de dépendre de `VIRTUAL_ENV`, qui peut
-    être absente ou pointer vers un autre environnement selon le contexte
-    d'exécution du serveur.
+    Le sous-processus a besoin des dépendances du projet (`openai`,
+    `python-dotenv`...) : il faut donc viser l'environnement virtuel. Sur
+    Streamlit Cloud, `sys.executable` pointe vers le Python système
+    (`/usr/local/bin/python`), qui ne les connaît pas, alors que le venv du
+    déploiement est décrit par `sys.prefix` (`/home/adminuser/venv`). On
+    privilégie donc l'interpréteur construit à partir de `sys.prefix`, à
+    condition qu'il existe réellement sur le disque.
+
+    `VIRTUAL_ENV` n'est pas utilisé : cette variable peut être absente ou décrire
+    un autre environnement que celui du processus courant.
 
     Returns:
-        `sys.executable`.
+        `<sys.prefix>/bin/python` (Linux/macOS) ou `<sys.prefix>/Scripts/python.exe`
+        (Windows) si ce fichier existe, sinon `sys.executable`.
     """
+    if os.name == "nt":  # Windows : <prefix>\Scripts\python.exe
+        candidat = os.path.join(sys.prefix, "Scripts", "python.exe")
+    else:  # Linux / macOS : <prefix>/bin/python
+        candidat = os.path.join(sys.prefix, "bin", "python")
+    if os.path.isfile(candidat):
+        return candidat
     return sys.executable
 
 

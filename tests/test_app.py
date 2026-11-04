@@ -76,11 +76,11 @@ def charger_app(monkeypatch):
     sys.modules.pop("app", None)
 
 
-def creer_venv(racine: Path) -> Path:
-    """Cree l'arborescence minimale d'un environnement virtuel.
+def creer_prefixe(racine: Path) -> Path:
+    """Cree l'arborescence minimale d'un prefixe Python (venv).
 
     Returns:
-        Chemin de l'interpreteur du venv, selon la plateforme.
+        Chemin de l'interpreteur du prefixe, selon la plateforme.
     """
     if os.name == "nt":
         interpreteur = racine / "Scripts" / "python.exe"
@@ -91,31 +91,37 @@ def creer_venv(racine: Path) -> Path:
     return interpreteur
 
 
-def test_interpreteur_est_sys_executable(charger_app, monkeypatch):
-    """L'interpreteur lance est celui qui execute deja `app.py`."""
-    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+def test_interpreteur_du_prefixe_prioritaire(charger_app, monkeypatch, tmp_path):
+    """L'interpreteur du venv decrit par `sys.prefix` prime sur `sys.executable`."""
+    prefixe = tmp_path / "venv"
+    interpreteur = creer_prefixe(prefixe)
+    monkeypatch.setattr(sys, "prefix", str(prefixe))
+    # VIRTUAL_ENV ne doit pas entrer en ligne de compte.
+    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "autre-venv"))
 
     app = charger_app()
 
-    assert app.python_executable() == sys.executable
+    assert app.python_executable() == str(interpreteur)
 
 
-def test_interpreteur_ignore_virtual_env(charger_app, monkeypatch, tmp_path):
-    """VIRTUAL_ENV est ignore : un venv mal indique ne detourne pas le lancement."""
-    venv = tmp_path / "venv"
-    interpreteur_du_venv = creer_venv(venv)
-    monkeypatch.setenv("VIRTUAL_ENV", str(venv))
-
-    app = charger_app()
-
-    assert app.python_executable() == sys.executable
-    assert app.python_executable() != str(interpreteur_du_venv)
-
-
-def test_sous_processus_utilise_sys_executable_et_herite_de_l_environnement(
-    charger_app, monkeypatch
+def test_repli_sur_sys_executable_si_prefixe_sans_interpreteur(
+    charger_app, monkeypatch, tmp_path
 ):
-    """`subprocess.run` recoit `sys.executable` et une copie de l'environnement."""
+    """Prefixe sans interpreteur sur le disque : repli sur `sys.executable`."""
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "prefixe-vide"))
+
+    app = charger_app()
+
+    assert app.python_executable() == sys.executable
+
+
+def test_sous_processus_utilise_l_interpreteur_du_prefixe(
+    charger_app, monkeypatch, tmp_path
+):
+    """`subprocess.run` recoit l'interpreteur du venv et une copie de l'environnement."""
+    prefixe = tmp_path / "venv"
+    interpreteur = creer_prefixe(prefixe)
+    monkeypatch.setattr(sys, "prefix", str(prefixe))
     monkeypatch.setenv("LLM_API_KEY", "sk-test-interface")
 
     capture = {}
@@ -132,7 +138,7 @@ def test_sous_processus_utilise_sys_executable_et_herite_de_l_environnement(
     app = charger_app(prompt="Bonjour")
 
     assert capture["commande"] == [
-        sys.executable,
+        str(interpreteur),
         "src/agent.py",
         "-p",
         "Bonjour",
