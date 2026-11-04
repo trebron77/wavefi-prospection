@@ -1,24 +1,8 @@
-# =============================================================================
-# Agent autonome local - dépendances Python
-# =============================================================================
-# Prérequis : Python 3.9+
-# Installation : python -m pip install -r requirements.txt
-#
-# openai        : client HTTP pour toute API compatible OpenAI (OpenAI, Ollama,
-#                 LM Studio, Groq, Mistral, Together...) -> src/llm_client.py
-# python-dotenv : lecture du fichier .env -> src/config.py
-# rich          : interface interactive (panneaux, tables, streaming, couleurs)
-#                 -> src/ui.py. Facultatif à l'exécution : sans lui, l'agent
-#                 retombe sur un affichage texte simple.
-#
-# Les options de résilience (retry + backoff exponentiel sur 429/5xx/timeouts)
-# sont fournies par le SDK openai lui-même.
-# Vérifié avec Python 3.9.7 / openai 2.48.0 / python-dotenv 1.2.1 / rich 15.0.0.
 openai>=1.40.0
 python-dotenv>=1.0.1
 rich>=13.7.0
-#
-# -----------------------------------------------------------------------------
-# Développement et tests (installés avec le reste)
-# -----------------------------------------------------------------------------
-pytest>=8.0.0       # tests hors ligne : python -m pytest -q
+streamlit>=1.31.0
+pandas>=2.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+altair<5.0.0
