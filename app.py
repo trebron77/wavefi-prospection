@@ -3,7 +3,7 @@
 L'interface ne fait pas tourner la boucle agentique dans le processus du serveur :
 elle lance `src/agent.py` dans un sous-processus. Deux précautions en découlent :
 
-- `python_executable()` choisit l'interpréteur de l'environnement virtuel ;
+- `python_executable()` réutilise l'interpréteur qui exécute déjà `app.py` ;
 - `injecter_secrets()` recopie les secrets Streamlit dans l'environnement hérité.
 """
 
@@ -27,25 +27,16 @@ ALIAS_SECRETS = {
 def python_executable() -> str:
     """Interpréteur Python à utiliser pour lancer l'agent en sous-processus.
 
-    Sur Streamlit Cloud, `app.py` est démarré par le Python système
-    (`/usr/local/bin/python`), qui ne connaît pas les dépendances du projet
-    (`openai`, `python-dotenv`...) : `sys.executable` y désigne le mauvais
-    interpréteur. La variable `VIRTUAL_ENV` pointe vers l'environnement virtuel
-    actif (`/home/adminuser/venv` sur Streamlit Cloud) ; son Python est donc
-    prioritaire, avec `sys.executable` en repli.
+    C'est le Python qui exécute déjà `app.py` : sur Streamlit Cloud, il s'agit de
+    celui de l'environnement virtuel du déploiement (`/home/adminuser/venv`), le
+    seul à connaître les dépendances du projet (`openai`, `python-dotenv`...).
+    S'en remettre à `sys.executable` évite de dépendre de `VIRTUAL_ENV`, qui peut
+    être absente ou pointer vers un autre environnement selon le contexte
+    d'exécution du serveur.
 
     Returns:
-        Chemin de l'interpréteur de l'environnement virtuel s'il existe, sinon
         `sys.executable`.
     """
-    virtual_env = os.environ.get("VIRTUAL_ENV")
-    if virtual_env:
-        if os.name == "nt":  # Windows : <venv>\Scripts\python.exe
-            candidat = os.path.join(virtual_env, "Scripts", "python.exe")
-        else:  # Linux / macOS : <venv>/bin/python
-            candidat = os.path.join(virtual_env, "bin", "python")
-        if os.path.isfile(candidat):
-            return candidat
     return sys.executable
 
 
@@ -131,7 +122,7 @@ if prompt := st.chat_input("Que dois-je faire ?"):
             injecter_secrets()
 
             # Exécution avec gestion des erreurs d'encodage ; le sous-processus
-            # hérite de l'environnement du serveur (secrets, VIRTUAL_ENV...).
+            # hérite de l'environnement du serveur (secrets compris).
             result = subprocess.run(
                 cmd, 
                 capture_output=True, 

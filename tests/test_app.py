@@ -91,19 +91,8 @@ def creer_venv(racine: Path) -> Path:
     return interpreteur
 
 
-def test_interpreteur_du_venv_prioritaire(charger_app, monkeypatch, tmp_path):
-    """VIRTUAL_ENV renseigne : son interpreteur remplace `sys.executable`."""
-    venv = tmp_path / "venv"
-    interpreteur = creer_venv(venv)
-    monkeypatch.setenv("VIRTUAL_ENV", str(venv))
-
-    app = charger_app()
-
-    assert app.python_executable() == str(interpreteur)
-
-
-def test_repli_sans_virtual_env(charger_app, monkeypatch):
-    """VIRTUAL_ENV absente : repli sur `sys.executable`."""
+def test_interpreteur_est_sys_executable(charger_app, monkeypatch):
+    """L'interpreteur lance est celui qui execute deja `app.py`."""
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
 
     app = charger_app()
@@ -111,22 +100,22 @@ def test_repli_sans_virtual_env(charger_app, monkeypatch):
     assert app.python_executable() == sys.executable
 
 
-def test_repli_si_interpreteur_absent(charger_app, monkeypatch, tmp_path):
-    """VIRTUAL_ENV pointe vers un dossier sans interpreteur : repli."""
-    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "venv-inexistant"))
+def test_interpreteur_ignore_virtual_env(charger_app, monkeypatch, tmp_path):
+    """VIRTUAL_ENV est ignore : un venv mal indique ne detourne pas le lancement."""
+    venv = tmp_path / "venv"
+    interpreteur_du_venv = creer_venv(venv)
+    monkeypatch.setenv("VIRTUAL_ENV", str(venv))
 
     app = charger_app()
 
     assert app.python_executable() == sys.executable
+    assert app.python_executable() != str(interpreteur_du_venv)
 
 
-def test_sous_processus_utilise_le_venv_et_herite_de_l_environnement(
-    charger_app, monkeypatch, tmp_path
+def test_sous_processus_utilise_sys_executable_et_herite_de_l_environnement(
+    charger_app, monkeypatch
 ):
-    """`subprocess.run` recoit l'interpreteur du venv et une copie de l'environnement."""
-    venv = tmp_path / "venv"
-    interpreteur = creer_venv(venv)
-    monkeypatch.setenv("VIRTUAL_ENV", str(venv))
+    """`subprocess.run` recoit `sys.executable` et une copie de l'environnement."""
     monkeypatch.setenv("LLM_API_KEY", "sk-test-interface")
 
     capture = {}
@@ -143,7 +132,7 @@ def test_sous_processus_utilise_le_venv_et_herite_de_l_environnement(
     app = charger_app(prompt="Bonjour")
 
     assert capture["commande"] == [
-        str(interpreteur),
+        sys.executable,
         "src/agent.py",
         "-p",
         "Bonjour",
@@ -151,6 +140,13 @@ def test_sous_processus_utilise_le_venv_et_herite_de_l_environnement(
         "deepseek-chat",
         "--yes",
     ]
+    options = capture["options"]
+    assert options["env"] is not os.environ, "l'environnement doit etre copie"
+    assert options["env"]["LLM_API_KEY"] == "sk-test-interface"
+    assert options["capture_output"] is True
+    assert options["encoding"] == "utf-8"
+    assert options["errors"] == "replace"
+    assert app.st.session_state.messages[-1] == {"role": "assistant", "content": "reponse"}
     options = capture["options"]
     assert options["env"] is not os.environ, "l'environnement doit etre copie"
     assert options["env"]["LLM_API_KEY"] == "sk-test-interface"
@@ -209,11 +205,8 @@ def test_sections_toml_ignorees(charger_app, monkeypatch):
     assert "mongodb" not in os.environ
 
 
-def test_sous_processus_recoit_les_secrets(charger_app, monkeypatch, tmp_path):
+def test_sous_processus_recoit_les_secrets(charger_app, monkeypatch):
     """Bout en bout : un secret absent de l'environnement arrive au sous-processus."""
-    venv = tmp_path / "venv"
-    creer_venv(venv)
-    monkeypatch.setenv("VIRTUAL_ENV", str(venv))
     monkeypatch.delenv("LLM_API_KEY", raising=False)
 
     capture = {}
@@ -294,11 +287,8 @@ def test_alias_vide_ignore(charger_app, monkeypatch):
     assert "LLM_API_KEY" not in os.environ
 
 
-def test_sous_processus_recoit_la_cle_deepseek(charger_app, monkeypatch, tmp_path):
+def test_sous_processus_recoit_la_cle_deepseek(charger_app, monkeypatch):
     """Bout en bout : `DEEPSEEK_API_KEY` arrive au sous-processus sous les deux noms."""
-    venv = tmp_path / "venv"
-    creer_venv(venv)
-    monkeypatch.setenv("VIRTUAL_ENV", str(venv))
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
