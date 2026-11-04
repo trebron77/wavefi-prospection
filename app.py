@@ -109,7 +109,7 @@ def injecter_secrets() -> List[str]:
     return injectees
 
 
-st.set_page_config(page_title="Mon Agent Autonome", page_icon="🤖")
+st.set_page_config(page_title="KAI", page_icon="🤖")
 st.title("🤖 Mon Agent Autonome")
 st.caption("Interface graphique propulsée par Streamlit et DeepSeek.")
 
