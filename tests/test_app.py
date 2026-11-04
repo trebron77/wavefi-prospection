@@ -46,26 +46,17 @@ class SecretsAbsents:
 
 
 def faux_streamlit(prompt=None, secrets=None):
-    """Module `streamlit` factice dont `chat_input` renvoie `prompt`.
-
-    Les appels a `st.write` sont conserves dans `module.writes` pour permettre de
-    verifier ce qui serait affiche.
-    """
+    """Module `streamlit` factice dont `chat_input` renvoie `prompt`."""
     module = types.ModuleType("streamlit")
     module.session_state = EtatSession(messages=[])
     module.secrets = {} if secrets is None else secrets
-    module.writes = []
     module.set_page_config = lambda *arguments, **options: None
     module.title = lambda *arguments, **options: None
-    module.subheader = lambda *arguments, **options: None
     module.caption = lambda *arguments, **options: None
     module.markdown = lambda *arguments, **options: None
     module.error = lambda *arguments, **options: None
     module.code = lambda *arguments, **options: None
     module.text = lambda *arguments, **options: None
-    module.write = lambda *arguments, **options: module.writes.append(
-        arguments[0] if arguments else ""
-    )
     module.chat_input = lambda *arguments, **options: prompt
     module.chat_message = lambda *arguments, **options: Bloc()
     module.spinner = lambda *arguments, **options: Bloc()
@@ -124,20 +115,26 @@ def test_repli_sur_sys_executable_si_prefixe_sans_interpreteur(
     assert app.python_executable() == sys.executable
 
 
-def test_diagnostic_affiche_l_environnement_python(charger_app, monkeypatch, tmp_path):
-    """Le bloc de diagnostic montre interpreteur, prefixe, `which` et debut de `sys.path`."""
-    prefixe = tmp_path / "venv"
-    creer_prefixe(prefixe)
-    monkeypatch.setattr(sys, "prefix", str(prefixe))
+def test_sous_processus_place_l_interpreteur_en_tete_du_path(charger_app, monkeypatch):
+    """Le `PATH` transmis commence par le dossier de l'interpreteur courant."""
+    dossier_python = os.path.dirname(sys.executable)
+    monkeypatch.setenv("PATH", os.pathsep.join(["/systeme/bin", "/autre/bin"]))
 
-    app = charger_app()
+    capture = {}
 
-    lignes = app.st.writes
-    assert f"Python: {sys.executable}" in lignes
-    assert f"Prefix: {str(prefixe)}" in lignes
-    assert f"Path: {sys.path[:5]}" in lignes
-    assert sum(ligne.startswith("Streamlit: ") for ligne in lignes) == 1
-    assert sum(ligne.startswith("Python (which): ") for ligne in lignes) == 1
+    def faux_run(commande, **options):
+        capture["options"] = options
+        return subprocess.CompletedProcess(commande, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", faux_run)
+
+    charger_app(prompt="Bonjour")
+
+    elements = capture["options"]["env"]["PATH"].split(os.pathsep)
+    assert elements[0] == dossier_python
+    assert elements[1:] == ["/systeme/bin", "/autre/bin"]
+    # La copie ne doit pas modifier l'environnement du serveur.
+    assert os.environ["PATH"] == os.pathsep.join(["/systeme/bin", "/autre/bin"])
 
 
 def test_sous_processus_utilise_l_interpreteur_du_prefixe(
