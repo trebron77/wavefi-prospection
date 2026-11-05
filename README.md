@@ -36,6 +36,7 @@ local-dev-agent-01/
 ├── pyproject.toml     # configuration pytest (pythonpath, options)
 ├── .env.example       # modèle de configuration à copier vers .env
 ├── .gitignore         # exclut venv, __pycache__, .env (clés API) et logs/
+├── find_atn_emails.py # vérifie des emails pros via l'endpoint email-verifier de Hunter.io
 ├── logs/              # journaux JSONL générés (créé au premier lancement)
 ├── tests/
 │   ├── conftest.py    # fixtures : projet temporaire, sandbox, registre, settings

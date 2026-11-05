@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>One-Pager WaveFi - Air Tahiti Nui</title>
+    <style>
+        /* --- Styles généraux --- */
+        :root {
+            --primary-blue: #005A9C;
+            --accent-turquoise: #00B4D8;
+            --text-dark: #1E293B;
+            --text-light: #475569;
+            --bg-light: #F8FAFC;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: #E2E8F0; /* Fond gris clair pour l'écran */
+            display: flex;
+            justify-content: center;
+            padding: 20px;
+            color: var(--text-dark);
+        }
+
+        /* --- Format A4 pour l'impression --- */
+        .page {
+            background-color: white;
+            width: 210mm;
+            min-height: 297mm;
+            padding: 15mm;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* --- En-tête --- */
+        header {
+            border-bottom: 4px solid var(--accent-turquoise);
+            padding-bottom: 15px;
+        }
+
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 24px;
+            color: var(--primary-blue);
+            line-height: 1.2;
+            max-width: 70%;
+        }
+
+        .logo-placeholder {
+            font-size: 20px;
+            font-weight: bold;
+            color: var(--primary-blue);
+            background: var(--bg-light);
+            padding: 10px 15px;
+            border-radius: 8px;
+            border: 2px dashed var(--accent-turquoise);
+        }
+
+        .subtitle {
+            font-size: 14px;
+            color: var(--text-light);
+            margin-top: 5px;
+            font-weight: 500;
+        }
+
+        /* --- Section Contexte --- */
+        .context {
+            background-color: var(--bg-light);
+            padding: 15px;
+            border-left: 5px solid var(--primary-blue);
+            border-radius: 4px;
+        }
+
+        .context p {
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        /* --- Grille des bénéfices --- */
+        .benefits-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 15px;
+        }
+
+        .benefit-card {
+            padding: 15px;
+            border: 1px solid #E2E8F0;
+            border-radius: 8px;
+            background: white;
+        }
+
+        .benefit-card h3 {
+            font-size: 14px;
+            color: var(--primary-blue);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .benefit-card p {
+            font-size: 12px;
+            color: var(--text-light);
+            line-height: 1.4;
+        }
+
+        /* --- Section Visuels --- */
+        .visuals {
+            display: flex;
+            gap: 15px;
+            background: var(--bg-light);
+            padding: 15px;
+            border-radius: 8px;
+            align-items: center;
+        }
+
+        .visual-text {
+            flex: 1;
+        }
+
+        .visual-text h3 {
+            font-size: 15px;
+            color: var(--primary-blue);
+            margin-bottom: 5px;
+        }
+
+        .visual-text p {
+            font-size: 12px;
+            color: var(--text-light);
+            line-height: 1.4;
+            margin-bottom: 10px;
+        }
+
+        .visual-images {
+            display: flex;
+            gap: 10px;
+        }
+
+                .img-maquette {
+            width: 110px; /* Ajuste la largeur si besoin */
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        /* --- Footer / Call to action --- */
+        footer {
+            margin-top: auto;
+            border-top: 2px solid #E2E8F0;
+            padding-top: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+        }
+
+        .cta {
+            font-size: 14px;
+            font-weight: bold;
+            color: var(--primary-blue);
+            max-width: 60%;
+        }
+
+        .contact-info {
+            text-align: right;
+            font-size: 11px;
+            color: var(--text-light);
+            line-height: 1.5;
+        }
+
+        .contact-info strong {
+            color: var(--text-dark);
+            font-size: 13px;
+        }
+
+        /* --- Impression --- */
+        @media print {
+            body {
+                background-color: white;
+                padding: 0;
+            }
+            .page {
+                box-shadow: none;
+                width: 100%;
+                min-height: auto;
+                padding: 0;
+            }
+            /* Force l'impression des couleurs de fond */
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="page">
+        <!-- EN-TÊTE -->
+        <header>
+            <div class="header-content">
+                <div>
+                    <h1>Transformez le Wi-Fi Starlink d'Air Tahiti Nui en un canal de revenus et d'expérience client.</h1>
+                    <p class="subtitle">WaveFi - Wi-Fi Marketing sur mesure pour le fenua</p>
+                </div>
+               <div style="display: flex; align-items: center;">
+    <svg width="160" height="50" viewBox="0 0 180 60" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="waveGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:#005A9C;stop-opacity:1" />
+          <stop offset="100%" style="stop-color:#00B4D8;stop-opacity:1" />
+        </linearGradient>
+      </defs>
+      
+      <!-- Symbole Vague + Wi-Fi -->
+      <g transform="translate(10, 5)">
+        <path d="M 5 40 Q 15 30, 25 40 T 45 40" fill="none" stroke="url(#waveGradient)" stroke-width="4" stroke-linecap="round"/>
+        <path d="M 15 25 Q 25 15, 35 25" fill="none" stroke="url(#waveGradient)" stroke-width="4" stroke-linecap="round"/>
+        <path d="M 8 15 Q 25 0, 42 15" fill="none" stroke="url(#waveGradient)" stroke-width="4" stroke-linecap="round"/>
+      </g>
+      
+      <!-- Texte WaveFi -->
+      <text x="65" y="38" font-family="Arial, sans-serif" font-weight="900" font-size="26" fill="#005A9C" letter-spacing="-0.5">Wave<tspan fill="#00B4D8">Fi</tspan></text>
+    </svg>
+</div>
+            </div>
+        </header>
+
+        <!-- CONTEXTE -->
+        <section class="context">
+            <p><strong>Le constat :</strong> Avec l'arrivée du Wi-Fi Starlink gratuit sur vos Boeing 787-9 dès 2027, Air Tahiti Nui disposera d'un canal de communication direct avec 100% de ses passagers long-courriers. Ce coût fixe représente une opportunité unique de générer des revenus ancillaires tout en enrichissant l'expérience à bord.</p>
+        </section>
+
+        <!-- SOLUTION & BÉNÉFICES -->
+        <section class="benefits-grid">
+            <div class="benefit-card">
+                <h3>💰 Revenus Ancillaires</h3>
+                <p>Monétisez la connexion via des offres partenaires locales (hôtels, excursions, duty-free), du retail media et des contenus sponsorisés. Estimation : <strong>1,50€ à 3€ par passager connecté.</strong></p>
+            </div>
+            <div class="benefit-card">
+                <h3>✨ Expérience Client</h3>
+                <p>Accueillez vos passagers avec un portail aux couleurs d'ATN ("Ia ora na à bord"). Intégrez des infos pratiques et un sondage NPS en 1 clic pour mesurer la satisfaction en temps réel.</p>
+            </div>
+            <div class="benefit-card">
+                <h3>🛡️ Conformité & Data</h3>
+                <p>Collecte d'emails opt-in dans le strict respect du RGPD. Portail sécurisé avec consentement granulaire. <strong>Solution déjà validée par la DGEN.</strong></p>
+            </div>
+        </section>
+
+        <!-- VISUELS -->
+        <section class="visuals">
+            <div class="visual-text">
+                <h3>Une surcouche logicielle, zéro friction technique</h3>
+                <p>WaveFi n'intervient pas sur l'installation réseau ou Starlink. Notre solution se branche simplement sur le portail existant via une redirection sécurisée, en accord avec vos équipes Marketing et DSI.</p>
+                <p><em>Découvrez ci-contre un aperçu du parcours passager personnalisé pour les vols PPT-LAX et PPT-CDG.</em></p>
+            </div>
+            <div class="visual-images">
+                                <div class="visual-images">
+                    <img src="maquette_connexion.jpg" alt="Maquette Connexion" class="img-maquette">
+                    <img src="maquette_accueil.jpg" alt="Maquette Accueil" class="img-maquette">
+                </div>
+            </div>
+        </section>
+
+        <!-- PIED DE PAGE / CTA -->
+        <footer>
+            <div class="cta">
+                <p>Prêt à valoriser votre Wi-Fi Starlink ?</p>
+                <p style="font-size: 12px; font-weight: normal; margin-top: 5px; color: var(--text-light);">
+                    Je serais ravi de vous présenter une maquette interactive lors d'un échange de 20 minutes.
+                </p>
+            </div>
+            <div class="contact-info">
+                <strong>Norbert OKUMIAK</strong><br>
+                Fondateur - WaveFi<br>
+                +689 87 07 70 19<br>
+                contact@wavefi.tech<br>
+                www.wavefi.tech<br>
+                <em>Papeete, Tahiti</em>
+            </div>
+        </footer>
+    </div>
+
+</body>
+</html>

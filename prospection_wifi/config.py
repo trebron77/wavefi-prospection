@@ -7,11 +7,11 @@ Ce module centralise :
 * les constantes de chemins de fichiers (CSV, dashboard HTML) ;
 * quelques utilitaires communs (journalisation, écriture CSV atomique).
 
-Il est importé par ``scraper.py``, ``scorer.py``, ``dashboard.py``,
-``emailer.py``, ``enricher.py``, ``enricher_hunter.py``,
-``enricher_netanalyzer.py``, ``enricher_facebook.py`` et ``sender.py`` afin que
-les étapes du tunnel partagent exactement les mêmes noms de colonnes et les
-mêmes chemins de fichiers.
+Il est importé par ``scraper.py``, ``clean_leads.py``, ``scorer.py``,
+``dashboard.py``, ``emailer.py``, ``enricher.py``, ``enricher_hunter.py``,
+``enricher_netanalyzer.py``, ``enricher_facebook.py``, ``sender.py`` et
+``generer_campagne_terrain.py`` afin que les étapes du tunnel partagent
+exactement les mêmes noms de colonnes et les mêmes chemins de fichiers.
 
 Aucune connexion réseau n'est effectuée à l'import : le module est sûr à
 importer dans des tests hors ligne.
@@ -44,6 +44,10 @@ ENV_FILE: Path = BASE_DIR / ".env"
 #: Sortie de ``scraper.py`` : entreprises brutes récupérées via Apify.
 LEADS_CSV: Path = BASE_DIR / "leads_polynesie.csv"
 
+#: Sortie de ``clean_leads.py`` : leads débarrassés des roulottes, snacks,
+#: pizzerias et autres petits commerces sans enjeu Wi-Fi marketing.
+FILTERED_CSV: Path = BASE_DIR / "leads_polynesie_filtres.csv"
+
 #: Sortie de ``scorer.py`` : leads enrichis d'un score d'achat.
 SCORES_CSV: Path = BASE_DIR / "leads_scores.csv"
 
@@ -72,6 +76,11 @@ FACEBOOK_CSV: Path = BASE_DIR / "campagne_wifi_facebook.csv"
 #: Sortie de ``emailer.py`` : campagne maître réunissant les textes des trois
 #: emails, l'email de contact, les données Wi-Fi et l'URL Facebook.
 MASTER_CSV: Path = BASE_DIR / "campagne_wifi_master.csv"
+
+#: Sortie de ``generer_campagne_terrain.py`` : établissements à visiter
+#: physiquement (scans Wi-Fi non rattachés à la campagne et leads scannés
+#: restés sans email de contact).
+TERRAIN_CSV: Path = BASE_DIR / "campagne_terrain.csv"
 
 
 
