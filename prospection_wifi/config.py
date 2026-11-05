@@ -9,8 +9,10 @@ Ce module centralise :
 
 Il est importé par ``scraper.py``, ``clean_leads.py``, ``scorer.py``,
 ``dashboard.py``, ``emailer.py``, ``enricher.py``, ``enricher_hunter.py``,
-``enricher_netanalyzer.py``, ``enricher_facebook.py``, ``sender.py`` et
-``generer_campagne_terrain.py`` afin que les étapes du tunnel partagent
+``enricher_netanalyzer.py``, ``enricher_facebook.py``, ``sender.py``,
+``generer_campagne_terrain.py``, ``enrichir_adresses_terrain.py`` et
+``fusionner_emails.py`` afin que
+les étapes du tunnel partagent
 exactement les mêmes noms de colonnes et les mêmes chemins de fichiers.
 
 Aucune connexion réseau n'est effectuée à l'import : le module est sûr à
@@ -77,10 +79,20 @@ FACEBOOK_CSV: Path = BASE_DIR / "campagne_wifi_facebook.csv"
 #: emails, l'email de contact, les données Wi-Fi et l'URL Facebook.
 MASTER_CSV: Path = BASE_DIR / "campagne_wifi_master.csv"
 
+#: Sortie de ``fusionner_emails.py`` : les leads de base (``leads_scores.csv``)
+#: réunis avec les emails de toutes les passes d'enrichissement (site web,
+#: Hunter.io, Facebook). Une ligne = un lead complet, avec la provenance de son
+#: adresse dans ``source_email``.
+LEADS_ENRICHIS_CSV: Path = BASE_DIR / "leads_enrichis_globaux.csv"
+
 #: Sortie de ``generer_campagne_terrain.py`` : établissements à visiter
 #: physiquement (scans Wi-Fi non rattachés à la campagne et leads scannés
 #: restés sans email de contact).
 TERRAIN_CSV: Path = BASE_DIR / "campagne_terrain.csv"
+
+#: Sortie de ``enrichir_adresses_terrain.py`` : la liste de visite complétée de
+#: l'adresse postale de chaque établissement (acteur Apify Google Maps).
+TERRAIN_ADRESSES_CSV: Path = BASE_DIR / "campagne_terrain_adresses.csv"
 
 
 
@@ -152,6 +164,11 @@ MASTER_COLUMNS: List[str] = [
     "securite_wifi",
     "facebook_url",
 ]
+
+#: Colonnes ajoutées par ``fusionner_emails.py`` : l'adresse email finalement
+#: retenue pour le lead et sa provenance (``base``, ``site``, ``hunter`` ou
+#: ``facebook``), pour savoir d'où vient chaque adresse.
+MERGED_COLUMNS: List[str] = ["email_contact", "source_email"]
 
 
 
