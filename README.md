@@ -32,11 +32,13 @@ code, exécuter des commandes) en s'appuyant sur l'API d'un LLM.
 ```
 local-dev-agent-01/
 ├── README.md          # but du projet, usage, feuille de route
-├── requirements.txt   # openai + python-dotenv + rich + pytest
+├── requirements.txt   # dépendances runtime (openai, rich, streamlit, playwright)
 ├── pyproject.toml     # configuration pytest (pythonpath, options)
 ├── .env.example       # modèle de configuration à copier vers .env
 ├── .gitignore         # exclut venv, __pycache__, .env (clés API) et logs/
 ├── find_atn_emails.py # vérifie des emails pros via l'endpoint email-verifier de Hunter.io
+├── generate_pdf.py    # exporte one_pager_atn.html en PDF A4 (Playwright headless)
+├── one_pager_atn.html # one-pager commercial WaveFi / Air Tahiti Nui (source du PDF)
 ├── logs/              # journaux JSONL générés (créé au premier lancement)
 ├── tests/
 │   ├── conftest.py    # fixtures : projet temporaire, sandbox, registre, settings
@@ -294,6 +296,34 @@ comme dans le reste du projet.
 Les anciens scripts de vérification manuels (`tests/legacy/_chk_tools.py`, `_chk_agent.py`,
 `_e2e_agent.py`) ont été portés en `pytest` puis supprimés : la suite ci-dessus est désormais
 l'unique filet de sécurité.
+
+### Convertir le one-pager en PDF
+
+`generate_pdf.py` ouvre `one_pager_atn.html` via une URI `file://` dans un Chromium headless
+piloté par Playwright, attend `networkidle` **et** le décodage de chaque image, puis écrit
+`WaveFi_OnePager_ATN.pdf` (A4, `print_background=True`).
+
+```powershell
+# Une seule fois : le navigateur (~230 Mo) n'est pas fourni par pip
+.\.venv\Scripts\python.exe -m playwright install chromium
+
+# Export
+.\.venv\Scripts\python.exe generate_pdf.py
+
+# Variantes
+.\.venv\Scripts\python.exe generate_pdf.py --sortie build/OnePager.pdf
+.\.venv\Scripts\python.exe generate_pdf.py --dry-run       # contrôles, sans navigateur
+.\.venv\Scripts\python.exe generate_pdf.py --canal msedge  # navigateur déjà installé
+```
+
+La feuille `@media print` du document force `min-height: auto` sur `.page` : le contenu se
+tasse en haut de la page et les écarts de `justify-content: space-between` disparaissent à
+l'impression. `--imposer-hauteur-a4` injecte une hauteur A4 au moment de l'export (le HTML
+reste intact) pour retrouver la répartition verticale égale de l'écran (écarts mesurés :
+72–73 px entre blocs, contre 20 px sans l'option).
+
+Codes de sortie : `0` succès, `1` échec de génération, `2` prérequis manquant (Playwright
+absent, page HTML introuvable, option invalide).
 
 ### Utiliser le client depuis le code
 

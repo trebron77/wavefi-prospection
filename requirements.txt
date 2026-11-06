@@ -6,3 +6,7 @@ pandas>=2.0.0
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 altair<5.0.0
+# Export HTML -> PDF du one-pager (generate_pdf.py). Version epinglee : au-dela
+# de 1.49.x, greenlet n'a plus de wheel Python 3.9 sous Windows et pip tente une
+# compilation locale.
+playwright==1.49.1
